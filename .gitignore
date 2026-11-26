@@ -1,0 +1,9 @@
+settings.json
+error.log
+debug.log
+.quit
+DesktopPet.exe
+__pycache__/
+build/
+dist/
+*.spec

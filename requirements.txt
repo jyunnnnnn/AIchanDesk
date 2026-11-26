@@ -1,0 +1,4 @@
+pillow>=10.0
+pystray            # 系統匣圖示（沒裝也能跑，只是沒有圖示）
+# 只有自己打包 exe 時需要
+pyinstaller>=6.0
