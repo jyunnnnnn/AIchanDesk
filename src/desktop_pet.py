@@ -216,6 +216,7 @@ GENERIC = {
     "race_start": ["我會贏的！"], "race_win": ["第一名！"], "race_lose": ["差一點……"],
     "share": ["分我一口！"], "eat_lose": ["被搶走了……"], "fortune": ["幫你看看今天的運勢～"],
     "stack_top": ["好高～", "風景不錯！", "嘿嘿，我在上面"], "stack_bottom": ["好重……", "下、下去啦！", "頭、頭要被壓扁了"],
+    "stack_free": ["呼……終於下來了", "脖子好痠……", "下次換我在上面！"],
     "jealous": ["我也要摸！", "都只摸她……", "（嘟嘴）我也在這裡耶"], "jealous_ok": ["嘿嘿……這還差不多", "早說嘛～"],
     "tag_start": ["我當鬼！", "來抓人囉～"], "tag_caught": ["抓到了！換你當鬼！", "抓到你了！"],
     "tag_got": ["被抓到了～", "可惡！"], "tag_end": ["好累……", "跑不動了～", "好好玩！"],
@@ -236,7 +237,7 @@ GENERIC = {
     "checkin": ["今天也來了呢～", "簽到成功！", "等你好久了～"], "gift": ["這個給你！", "送你的～", "收下吧！"],
     "birthday": ["生日快樂！🎂", "祝你生日快樂～今天是你的日子！"],
     "todo_remind": ["「{t}」時間到了喔！", "提醒你：「{t}」時間到了！"],
-    "todo_soon": ["「{t}」還剩 {m} 分鐘喔！", "提醒一下，「{t}」再 {m} 分鐘就到了～"], "todo_done": ["好棒！完成了！", "辛苦了～", "又完成一件！"],
+    "todo_soon": ["「{t}」還剩 {m} 喔！", "提醒一下，「{t}」再 {m} 就到了～"], "todo_done": ["好棒！完成了！", "辛苦了～", "又完成一件！"],
     "want_food": ["給我的嗎？", "好香～", "（盯——）"], "want_toy": ["要玩嗎？", "丟給我！"],
     "snatch": ["搶到了！", "嘿嘿，是我的了"], "food_forgive": ["……看在食物的份上，原諒你", "好吧，不氣了"],
     "food_wake": ["好香……！", "（聞聞）有吃的？"],
@@ -607,7 +608,7 @@ def monitor_of(hmon):
 
 
 def parse_when(text, now=None):
-    """待辦的時間：9:30、930、9點半、下午3點、15.30、3pm、30分鐘後、1小時後……都看得懂。
+    """待辦的時間：9:30、930、9點半、下午3點、15.30、3pm、30秒後、30分鐘後、1小時後、1分30秒後……都看得懂。
     回傳 datetime（已經過了就算明天），看不懂回傳 None，空白回傳 False。"""
     now = now or datetime.datetime.now()
     t = text.strip().lower()
@@ -615,12 +616,15 @@ def parse_when(text, now=None):
         return False
     t = t.translate(str.maketrans("０１２３４５６７８９：．", "0123456789:."))
     t = t.replace(" ", "")
-    m = re.fullmatch(r"\+?(\d+(?:\.\d+)?)(分鐘|分|min|m)後?", t) or re.fullmatch(r"\+(\d+)()", t)
+    # 幾小時／幾分／幾秒後（可以混著寫：1小時30分、1分30秒後）；小數也行，最後換算成整秒
+    m = re.fullmatch(r"\+?(?:(\d+(?:\.\d+)?)個?(?:小時|鐘頭|hr|h))?(?:(\d+(?:\.\d+)?)(?:分鐘|分|min|m))?"
+                     r"(?:(\d+(?:\.\d+)?)(?:秒鐘|秒|sec|s))?後?", t)
+    if m and any(m.groups()):
+        secs = round(float(m.group(1) or 0) * 3600 + float(m.group(2) or 0) * 60 + float(m.group(3) or 0))
+        return (now + datetime.timedelta(seconds=max(1, secs))).replace(microsecond=0)
+    m = re.fullmatch(r"\+(\d+)", t)                                  # +45：45 分鐘後
     if m:
-        return (now + datetime.timedelta(minutes=float(m.group(1)))).replace(second=0, microsecond=0)
-    m = re.fullmatch(r"\+?(\d+(?:\.\d+)?)(個)?(小時|鐘頭|hr|h)(後)?", t)
-    if m:
-        return (now + datetime.timedelta(hours=float(m.group(1)))).replace(second=0, microsecond=0)
+        return (now + datetime.timedelta(minutes=int(m.group(1)))).replace(microsecond=0)
     pm = am = False
     for k in ("下午", "晚上", "傍晚", "pm", "p.m."):
         if k in t:
@@ -697,11 +701,27 @@ def repeat_text(td):
     return None
 
 
+def dur_text(secs):
+    """剩多久：不到一分鐘用秒，不會出現 0.05 分鐘這種東西。"""
+    secs = max(0, int(round(secs)))
+    if secs < 60:
+        return f"{secs} 秒"
+    if secs < 3600:
+        mm, ss = divmod(secs, 60)
+        return f"{mm} 分 {ss} 秒" if ss else f"{mm} 分鐘"
+    hh, mm = divmod(secs // 60, 60)
+    return f"{hh} 小時 {mm} 分" if mm else f"{hh} 小時"
+
+
 def when_text(due, now=None):
     now = now or datetime.datetime.now()
     day = (due.date() - now.date()).days
     pre = "" if day == 0 else "明天 " if day == 1 else f"{due.month}/{due.day} "
-    return pre + due.strftime("%H:%M")
+    text = pre + due.strftime("%H:%M:%S" if due.second else "%H:%M")
+    left = (due - now).total_seconds()
+    if 0 < left < 3600:                                             # 一小時內：順便說還有多久
+        text += f"（{dur_text(left)}後）"
+    return text
 
 
 def version_tuple(v):
@@ -2001,6 +2021,8 @@ class Pet:
     def say(self, key=None, text=None, secs=2.8, force=False, **fmt):
         if self.world.settings.get("quiet") and not force:
             return
+        if getattr(self, "pressed", False):                  # 被踩在下面：說不出話
+            return
         if text is None:
             opts = self.lines(key)
             if not opts:
@@ -2191,6 +2213,7 @@ class Pet:
         if self.sulking and self.anger < SULK_END:      # 不管在做什麼，消到夠低就原諒你
             self.forgive()
 
+        self.update_pressed()
         if s == "idle":
             self.update_idle()
         elif s == "swing":
@@ -2308,6 +2331,13 @@ class Pet:
             if abs(cursor_pos()[0] - self.x) > 90:
                 self.state = "walk"
                 self.set_pose("idle", 0)
+            return
+        if getattr(self, "pressed", False):                  # 最底下被踩住：只會偶爾慢慢走幾步，上面的跟著走
+            if random.random() < 1 / (8 * FPS):
+                d = random.choice((-1, 1))
+                if not (self.L + 150 < self.x + d * 120 < self.R - 150):
+                    d = -d
+                self.go_to(self.x + d * random.uniform(60, 160), .9)
             return
         if getattr(self, "queued", False):              # 排隊溜滑梯：乖乖站著等
             if self.t % int(9 * FPS) == int(4 * FPS) and random.random() < .4:
@@ -2555,7 +2585,7 @@ class Pet:
             self.x = max(self.L + 40, min(self.x, self.R - 40))
             self.vx = -self.vx * 0.6
         # 撞到地上的其他隻
-        if abs(self.vx) > 5 and self.y > self.floor - w.sprite_h * 0.7:
+        if abs(self.vx) > 5 and self.y > self.floor - w.sprite_h * 0.7 and not getattr(self, "soft_land", False):
             for o in w.pets.values():
                 if o is not self and o.state not in ("drag", "air", "leaving", "edge", "hide", "stack") \
                         and abs(o.x - self.x) < 55 and abs(o.y - self.y) < w.sprite_h * .7:
@@ -2564,12 +2594,14 @@ class Pet:
                     w.add_love(self, 0)
         if self.y >= self.floor:
             self.y = self.floor
-            if self.vy > 7:
+            soft = getattr(self, "soft_land", False)
+            if self.vy > 7 and not soft:
                 self.impact = max(self.impact, self.vy)
                 self.vy = -self.vy * 0.35
                 self.vx *= 0.7
             else:
-                hard = self.impact > 16 and not self.plat
+                self.soft_land = False
+                hard = self.impact > 16 and not self.plat and not soft
                 flew, self.flying = self.flying, False
                 self.impact = 0
                 self.vx = self.vy = 0
@@ -2703,6 +2735,8 @@ class Pet:
 
     def jump_to(self, tx, ty):
         """跳到 (tx, ty)：算好初速，讓她剛好在下降時經過那個高度。"""
+        if getattr(self, "pressed", False):                  # 頭上有人：跳不起來
+            return
         rise = max(30.0, self.y - ty + 50)
         vy = -math.sqrt(2 * GRAVITY * rise)
         t_total = -vy / GRAVITY + math.sqrt(2 * 50 / GRAVITY)
@@ -2764,11 +2798,49 @@ class Pet:
         if not (l - 10 < self.x < r + 10) or t < work_area(self.x, t + 5)[1] + 40:
             self.fall()
 
-    # ---------- 疊羅漢 ----------
+    # ---------- 疊高高 ----------
+    # 只有最上面那隻開心、會說話、自己決定什麼時候跳下來；被踩在下面的（不管第幾層）都苦著臉、不說話、不跳，
+    # 最底下的偶爾慢慢走幾步，上面的全部跟著動。
+    def carrier_of(self):
+        """站在我頭上的那隻（沒有就 None）。"""
+        return next((q for q in self.world.pets.values() if q.on is self and q.state == "stack"), None)
+
+    def pressed_face(self):
+        """被踩住的表情：最底下比較累、中間的比較氣，沒有那張圖就往下找。"""
+        bottom = self.state != "stack"
+        order = ("tired", "pout", "annoyed", "puffed", "oops", "surprised") if bottom else \
+            ("annoyed", "pout", "puffed", "tired", "oops", "surprised")
+        return next((q for q in order if self.char.has(q)), "idle")
+
+    def update_pressed(self):
+        """每一格：有人踩在頭上 → 苦著臉；剛被放開 → 鬆一口氣。"""
+        on_me = self.carrier_of()
+        was = getattr(self, "pressed", False)
+        if on_me and self.state in ("idle", "walk", "stack", "act", "sulk", "study", "sleep"):
+            if not was:
+                self.pressed = True
+                self.pressed_pose = self.pressed_face()
+                self.bubble = None                           # 正在講的話也收起來
+            if self.state in ("idle", "walk", "stack") and self.pose != self.pressed_pose:
+                self.set_pose(self.pressed_pose)
+        elif was:
+            self.pressed = False
+            if self.state == "stack":                        # 上面的跳走了，現在換我在最上面
+                self.stack_until = self.world.tick + int(random.uniform(5, 11) * FPS)
+                self.set_pose("happy")
+                if random.random() < .5:
+                    self.say("stack_top")
+            elif self.state in ("idle", "walk"):
+                self.set_pose("idle", 0)
+                if random.random() < .6:
+                    self.act("happy", 1.4, "stack_free")
+
     def try_stack(self, prev_y):
         w = self.world
         for o in w.pets.values():
             if o is self or o.giant or o.state not in ("idle", "walk", "act", "sleep", "sulk", "study", "stack"):
+                continue
+            if o.carrier_of():                               # 只能疊在最上面那隻的頭上
                 continue
             head = o.y - o.current_image().size[1] * .82
             if abs(o.x - self.x) < 55 and prev_y <= head <= self.y:
@@ -2782,8 +2854,10 @@ class Pet:
                 self.say("stack_top", force=True)
                 self.stack_until = w.tick + int(random.uniform(8, 16) * FPS)
                 self.lw.raise_()
-                if o.state in ("idle", "walk", "act"):
-                    o.act("tired" if o.char.has("tired") else "annoyed", 3, "stack_bottom", force=True)
+                if o.state == "act":
+                    o.state = "idle"
+                o.target = None
+                o.then = None
                 w.add_love(self, 1)
                 return True
         return False
@@ -2797,11 +2871,14 @@ class Pet:
         if (nx, ny) != (self.x, self.y):
             self.x, self.y = nx, ny
             self.dirty = True
-        if self.t % int(6 * FPS) == 0 and random.random() < .3:
-            o.say("stack_bottom")
+        if self.carrier_of():                                # 我頭上還有人：乖乖被踩著，不能自己跳走
+            return
+        if self.t % int(7 * FPS) == int(3 * FPS) and random.random() < .35:
+            self.say("stack_top")
         if self.world.tick >= self.stack_until:
             self.on = None
-            self.jump_to(self.x + random.choice((-1, 1)) * 140, o.floor - 20)
+            self.jump_to(self.x + random.choice((-1, 1)) * max(140, self.world.sprite_h * .6), o.floor - 20)
+            self.soft_land = True                            # 自己跳下來的：輕輕落地，不會頭暈
             self.set_pose("happy")
 
     # ---------- 鬼抓人 ----------
@@ -3292,6 +3369,7 @@ class Pet:
                 return
             self.state = "idle"
             self.jump_to(self.x + random.choice((-1, 1)) * w.sprite_h * .9, self.y - 30)   # 跳下來
+            self.soft_land = True
             w.stat("tramp")
 
     def render_giant(self):
@@ -3461,6 +3539,7 @@ class Pet:
             self.target = None
             self.then = None
             self.state = "drag"
+            self.soft_land = False                       # 被你拎起來丟出去的，摔太大力一樣會暈
             self.set_pose("surprised")
             self.theta = self.rest_angle()
             self.omega = self.spin = 0.0
@@ -3921,7 +4000,7 @@ class World:
                 due = now.replace(hour=int(td["time"][:2]), minute=int(td["time"][3:]), second=0, microsecond=0)
                 if td.get("notified") == today or due <= now:
                     due += datetime.timedelta(days=1)
-                td.update(repeat="daily", at=due.isoformat(timespec="minutes"), notified="", warned="")
+                td.update(repeat="daily", at=due.isoformat(timespec="seconds"), notified="", warned="")
                 self.save()
             if td.get("at"):                                # 新的寫法：指定的那一天那個時間，提醒一次
                 try:
@@ -3931,18 +4010,22 @@ class World:
                 if td.get("notified") == td["at"]:
                     continue
                 left = (due - now).total_seconds() / 60
-                if 0 < left <= 10 and td.get("warned") != td["at"]:
+                try:
+                    long_ = (due - datetime.datetime.fromisoformat(td["made"])).total_seconds() > 15 * 60
+                except (KeyError, ValueError):
+                    long_ = True
+                if 0 < left <= 10 and td.get("warned") != td["at"] and long_:   # 剛加就快到的不用預告
                     td["warned"] = td["at"]
                     p = self.todo_pet()
                     if p:
                         p.touch()
                         p.act("surprised", 3)
-                        p.say("todo_soon", force=True, secs=6, t=td["text"], m=max(1, round(left)))
+                        p.say("todo_soon", force=True, secs=6, t=td["text"], m=dur_text(left * 60))
                     self.save()
                 elif left <= 0:
                     td["notified"] = td["at"]
                     if td.get("repeat", "none") != "none":          # 重複的：排好下一次
-                        td["at"] = next_due(due, td["repeat"], now).isoformat(timespec="minutes")
+                        td["at"] = next_due(due, td["repeat"], now).isoformat(timespec="seconds")
                         td["notified"] = td["warned"] = ""
                     p = self.todo_pet()
                     if p:
@@ -3962,7 +4045,7 @@ class World:
                 if p:
                     p.touch()
                     p.act("surprised", 3)
-                    p.say("todo_soon", force=True, secs=6, t=td["text"], m=max(1, round(left)))
+                    p.say("todo_soon", force=True, secs=6, t=td["text"], m=dur_text(left * 60))
                 self.save()
                 continue
             if hm >= td["time"]:
@@ -5962,9 +6045,10 @@ class World:
             self.check_fullscreen()
         self.check_topic()
         self.check_time_chat()
+        if self.tick % 15 == 0:                      # 待辦可以設到秒，要常常看一下
+            self.check_todos()
         if self.tick % 60 == 0:
             self.check_app()
-            self.check_todos()
             self.daily_gift()
             self.tell_update()
         if self.tick % 300 == 0:
@@ -6706,7 +6790,7 @@ C_PINK, C_RED = "#ec6f95", "#e0533d"
 FONT = "Microsoft JhengHei"
 STATE_NAMES = {"swing": "盪鞦韆中", "seesaw": "玩蹺蹺板中", "tramp": "跳彈跳床中", "hoop_peek": "躲在籃框後面偷看你", "ladder": "爬梯子", "slide_top": "在溜滑梯上", "slide": "溜滑梯中", "idle": "閒晃中", "walk": "散步中", "act": "表演中", "sleep": "睡覺中", "sulk": "賭氣中",
                "study": "陪讀中", "edge": "躲在螢幕邊邊", "drag": "被你拎著", "air": "飛在空中",
-               "stack": "疊在別人頭上", "tag": "玩鬼抓人中", "hide": "躲起來了", "chase": "追東西中",
+               "stack": "疊高高中", "tag": "玩鬼抓人中", "hide": "躲起來了", "chase": "追東西中",
                "race": "賽跑中", "leaving": "回家中"}
 
 
@@ -7072,7 +7156,7 @@ class Panel:
         self.todo_text.bind("<Return>", lambda e: self.add_todo())
         self.todo_time.bind("<Return>", lambda e: self.add_todo())
         self.todo_time.bind("<KeyRelease>", lambda e: self.todo_preview())
-        self.todo_msg = self.label(body, "時間的寫法：9:30、930、9點半、下午3點、30分鐘後、1小時後（不填＝不提醒）", muted=True, size=9)
+        self.todo_msg = self.label(body, "時間的寫法：9:30、930、9點半、下午3點、30秒後、30分鐘後、1小時後（不填＝不提醒）", muted=True, size=9)
         self.todo_msg.grid(row=1, column=0, columnspan=4, sticky="w", pady=(4, 0))
         self.todo_body = self.card(f, "清單", note="打勾＝完成，她們會誇你")
 
@@ -7086,12 +7170,12 @@ class Panel:
         if due is False and rep != "none":
             self.todo_msg.config(text="要重複提醒的話，請填時間喔（例如 10:00）", fg="#d0573c")
         elif due is False:
-            self.todo_msg.config(text="時間的寫法：9:30、930、9點半、下午3點、30分鐘後、1小時後（不填＝不提醒）", fg=C_MUTED)
+            self.todo_msg.config(text="時間的寫法：9:30、930、9點半、下午3點、30秒後、30分鐘後、1小時後（不填＝不提醒）", fg=C_MUTED)
         elif due is None:
-            self.todo_msg.config(text="看不懂這個時間……試試 9:30、下午3點、30分鐘後", fg="#d0573c")
+            self.todo_msg.config(text="看不懂這個時間……試試 9:30、下午3點、30秒後、30分鐘後", fg="#d0573c")
         elif rep != "none":
             due = first_due(due, rep)
-            td = {"repeat": rep, "time": due.strftime("%H:%M"), "at": due.isoformat(timespec="minutes")}
+            td = {"repeat": rep, "time": due.strftime("%H:%M"), "at": due.isoformat(timespec="seconds")}
             self.todo_msg.config(text=f"⏰ {repeat_text(td)} 提醒你（第一次：{when_text(due)}）", fg=C_ACCENT)
         else:
             self.todo_msg.config(text=f"⏰ 會在 {when_text(due)} 提醒你", fg=C_ACCENT)
@@ -7106,13 +7190,14 @@ class Panel:
             self.todo_preview()
             self.todo_time.focus_set()
             return
-        td = {"text": t, "time": "", "done": False, "notified": ""}
+        td = {"text": t, "time": "", "done": False, "notified": "",
+              "made": datetime.datetime.now().isoformat(timespec="seconds")}
         if due:
             if rep != "none":
                 due = first_due(due, rep)
                 td["repeat"] = rep
-            td["time"] = due.strftime("%H:%M")
-            td["at"] = due.isoformat(timespec="minutes")
+            td["time"] = due.strftime("%H:%M:%S" if due.second else "%H:%M")
+            td["at"] = due.isoformat(timespec="seconds")
         self.w.settings.setdefault("todos", []).append(td)
         self.w.save()
         self.todo_text.delete(0, "end")
@@ -7158,7 +7243,7 @@ class Panel:
             self.w.todo_done(td)
             td["done"] = False
             try:
-                td["at"] = next_due(datetime.datetime.fromisoformat(td["at"]), td["repeat"]).isoformat(timespec="minutes")
+                td["at"] = next_due(datetime.datetime.fromisoformat(td["at"]), td["repeat"]).isoformat(timespec="seconds")
             except (KeyError, ValueError):
                 pass
             td["notified"] = td["warned"] = ""
