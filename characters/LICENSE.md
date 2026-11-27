@@ -33,8 +33,8 @@
 
 ---
 
-## DesktopPet 的使用說明
+## AIchanDesk 的使用說明
 
 本資料夾的立繪取自 [CrossPet](https://github.com/lokicorvus/crosspet)（commit 6e98970，作者 lokicorvus 與 CrossPet contributors），
 依 CC BY-NC-SA 4.0 使用。各角色的 `character.json` 台詞由 CrossPet 原文轉為台灣繁體並改寫、增補，同樣以 CC BY-NC-SA 4.0 授權。
-`dialogs.json` 的角色對話為 DesktopPet 原創，同樣以 CC BY-NC-SA 4.0 授權。
+`dialogs.json` 的角色對話為 AIchanDesk（原名 DesktopPet）原創，同樣以 CC BY-NC-SA 4.0 授權。

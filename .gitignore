@@ -3,9 +3,11 @@ error.log
 debug.log
 .quit
 DesktopPet.exe
+AIchanDesk.exe
 __pycache__/
 build/
 dist/
 *.spec
 characters/*/raw/
 album/
+music/

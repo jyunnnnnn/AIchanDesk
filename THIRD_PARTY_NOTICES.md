@@ -1,6 +1,6 @@
 # 第三方軟體與素材
 
-## 打包在 DesktopPet.exe 裡的軟體
+## 打包在 AIchanDesk.exe 裡的軟體
 
 | 軟體 | 授權 | 網址 |
 |---|---|---|
@@ -15,5 +15,6 @@
 |---|---|---|
 | 角色立繪、換裝 | [CrossPet](https://github.com/lokicorvus/crosspet)（lokicorvus 與 CrossPet contributors） | CC BY-NC-SA 4.0，原作者見 `characters/LICENSE.md` |
 | 台詞 | 以 CrossPet 原文為基礎轉成台灣繁體並改寫、增補 | CC BY-NC-SA 4.0 |
+| 介面字體「jf open 粉圓」2.1（`fonts/`） | [justfont/open-huninn-font](https://github.com/justfont/open-huninn-font)；漢字部分衍生自 Kosugi Maru | SIL Open Font License 1.1（漢字部分 Apache-2.0），全文見 `fonts/jf-openhuninn-LICENSE.txt` |
 | 程式圖示、README 封面圖 | 由 CrossPet 立繪裁切、拼貼 | CC BY-NC-SA 4.0 |
 | 互動設計（甩到生氣、貼邊、依時段打招呼） | 參考 CrossPet（程式碼為 MIT），本專案以 Python 重新撰寫，未複製原始碼 | — |

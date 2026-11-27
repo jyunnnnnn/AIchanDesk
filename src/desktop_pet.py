@@ -1,6 +1,6 @@
-"""DesktopPet：AI 娘桌寵（小克、GPT、大肥魚、Gemini、GLM、千問……可以同時叫出好幾隻）
+"""AIchanDesk - 你的桌面小可愛們：AI 娘桌寵（小克、GPT、大肥魚、Gemini、GLM、千問……可以同時叫出好幾隻）
 
-資料夾結構（相對於 DesktopPet.exe 所在位置）
+資料夾結構（相對於 AIchanDesk.exe 所在位置）
     characters/<角色>/*.webp          立繪，檔名 = 姿態名，-2、-3 是同一姿態的第二、三張
     characters/<角色>/character.json  名字、顏色、台詞
     characters/dialogs.json           角色碰在一起時的對話
@@ -26,6 +26,7 @@ import sys
 import time
 import traceback
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk
 from ctypes import wintypes
 from pathlib import Path
@@ -39,6 +40,7 @@ else:
 CHAR_DIR = BASE / "characters"
 SETTINGS = BASE / "settings.json"
 ALBUM = BASE / "album"
+MUSIC_DIR = BASE / "music"          # 內建的音樂資料夾：一開始是空的，放你自己的歌（不會推上 GitHub）
 LOG = BASE / "error.log"
 
 TICK_MS = 33                     # 邏輯一格
@@ -204,9 +206,9 @@ ACHIEVEMENTS = [
 SHOT_SPREAD = 1.75           # 投籃的誤差（籃框半徑的幾倍）：大約七成會進
 KICK_VY = ((2, 8, 1.0), (9, 14, 1.0), (15, 20, 1.0), (22, 30, 1.0))    # 射門的高度（最低, 最高, 機率權重）：大約七成會進
 
-APP_VERSION = "1.2.0"                 # 發新版時跟 Release 的 tag 一起改
-RELEASE_API = "https://api.github.com/repos/jyunnnnnn/DesktopPet/releases/latest"
-RELEASE_PAGE = "https://github.com/jyunnnnnn/DesktopPet/releases/latest"
+APP_VERSION = "1.3.0"                 # 發新版時跟 Release 的 tag 一起改
+RELEASE_API = "https://api.github.com/repos/jyunnnnnn/AIchanDesk/releases/latest"
+RELEASE_PAGE = "https://github.com/jyunnnnnn/AIchanDesk/releases/latest"
 
 GENERIC = {
     "kick": ["嘿！"], "chase": ["等等！"], "bump": ["好痛！"], "spin": ["轉暈了……"],
@@ -272,6 +274,12 @@ GENERIC = {
     "seesaw_alone": ["一個人玩不起來……", "都沒有人要陪我玩……"],
     "tramp": ["彈彈彈～", "好好玩！", "跳～跳～"],
     "tramp_flip": ["翻跟斗～！", "看我的！", "後空翻！"],
+    "music": ["這首好好聽～", "♪～♪～", "（跟著哼）", "再一首！", "好想跳舞～"],
+    "dj_start": ["我來放音樂！🎧", "今天由我當 DJ～", "想聽什麼？我來放！", "交給我吧～♪"],
+    "music_new": ["🎵 {t}", "下一首是「{t}」～", "🎵 {t}！我喜歡這首"],
+    "push": ["推～", "飛高高～", "再高一點！", "嘿咻！"],
+    "push_end": ["換我盪！", "好玩嗎？", "下次換你推我～"],
+    "bonk": ["哎呀！", "好痛！誰丟的？", "嚇我一跳……", "球、球砸到我了！"],
     "cheer_up": ["沒關係～", "下次一定進！", "加油加油！", "差一點點而已！"],
     "miss_kick": ["沒進……", "踢歪了！", "腳滑了啦……", "剛剛那球不算！", "哼，一定是球的問題", "再一次嘛……"],
     "drink": ["好喝～", "（咕嚕咕嚕）", "謝謝你～好好喝"],
@@ -402,7 +410,9 @@ def time_tags():
 
 
 def dbg(msg):
-    """撒嬌等功能的除錯紀錄（debug.log，不會上傳）。"""
+    """撒嬌等功能的除錯紀錄（debug.log，不會上傳）。平常不寫；資料夾裡放一個 debug.on 才會開。"""
+    if not (BASE / "debug.on").exists():
+        return
     try:
         f = BASE / "debug.log"
         if f.exists() and f.stat().st_size > 300_000:
@@ -497,6 +507,7 @@ class LayeredWindow:
         ex = user32.GetWindowLongW(self.hwnd, -20)
         user32.SetWindowLongW(self.hwnd, -20, ex | 0x00080000 | 0x00000080)   # LAYERED | TOOLWINDOW
         self.pos = (0, 0)
+        self.off = (0, 0)                # 裁掉透明邊以後，視窗左上角在原圖裡的位置
         self.dib = None                  # (寬, 高, mem DC, bitmap, bits)：同樣大小就重複用
 
     def _dib(self, w, h):
@@ -515,9 +526,25 @@ class LayeredWindow:
         self.dib = (w, h, mem, hbmp, bits)
         return self.dib
 
-    def show(self, img, x, y):
+    def show(self, img, x, y, crop=False):
+        """crop：先裁掉四周全透明的部分再送（角色視窗大部分是空的，送的像素少一半以上）。"""
+        if crop:
+            bb = img.getbbox()
+            if bb is None:
+                img, bb = Image.new("RGBA", (1, 1)), (0, 0, 1, 1)
+            else:                                                  # 大小湊成 32 的倍數：幾乎每格都能重複用同一塊 DIB
+                W, H = img.size
+                bw, bh = min(W, (bb[2] - bb[0] + 31) // 32 * 32), min(H, (bb[3] - bb[1] + 31) // 32 * 32)
+                x0, y0 = min(bb[0], W - bw), min(bb[1], H - bh)
+                bb = (x0, y0, x0 + bw, y0 + bh)
+                if bb != (0, 0, W, H):
+                    img = img.crop(bb)
+            x, y = x + bb[0], y + bb[1]
+            self.off = (bb[0], bb[1])
+        else:
+            self.off = (0, 0)
         w, h = img.size
-        data = img.convert("RGBa").tobytes("raw", "BGRa")      # 預乘 alpha、轉 BGRA（C 實作，快）
+        data = img.tobytes("raw", "BGRa")                        # 直接預乘 alpha、轉 BGRA（C 實作，快）
         _, _, mem, hbmp, bits = self._dib(w, h)
         ctypes.memmove(bits, data, len(data))
         screen = user32.GetDC(None)
@@ -626,6 +653,15 @@ def parse_when(text, now=None):
     m = re.fullmatch(r"\+(\d+)", t)                                  # +45：45 分鐘後
     if m:
         return (now + datetime.timedelta(minutes=int(m.group(1)))).replace(microsecond=0)
+    days = 0                                                          # 明天、後天
+    for k, dd in (("大後天", 3), ("後天", 2), ("明天", 1), ("明早", 1), ("今天", 0), ("今晚", 0)):
+        if t.startswith(k):
+            days, t = dd, t[len(k):]
+            if k in ("明早",):
+                t = "早上" + t
+            if k in ("今晚",):
+                t = "晚上" + t
+            break
     pm = am = False
     for k in ("下午", "晚上", "傍晚", "pm", "p.m."):
         if k in t:
@@ -653,7 +689,7 @@ def parse_when(text, now=None):
         hh += 12
     if hh > 23 or mm > 59:
         return None
-    due = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    due = now.replace(hour=hh, minute=mm, second=0, microsecond=0) + datetime.timedelta(days=days)
     if due <= now:
         due += datetime.timedelta(days=1)                           # 今天已經過了：明天的這個時間
     return due
@@ -803,20 +839,24 @@ def window_ok(hwnd):
             and not user32.IsZoomed(hwnd))
 
 
-def list_windows():
-    """畫面上看得到的一般視窗，從最上層排到最下層：[(hwnd, 左, 上, 右, 下, 可以站)]"""
+def list_windows(extra=()):
+    """畫面上看得到的一般視窗，從最上層排到最下層：[(hwnd, 左, 上, 右, 下, 可以站)]
+    extra：自己的視窗裡也可以讓她們爬的（音樂播放器）。"""
     out = []
 
     def cb(hwnd, _):
         try:
-            if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd) or user32.GetWindowTextLengthW(hwnd) == 0:
+            if not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
                 return True
-            if user32.GetWindowLongW(hwnd, -20) & 0x80:          # 工具視窗
-                return True
-            pid = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            if pid.value == MY_PID:
-                return True
+            if hwnd not in extra:
+                if user32.GetWindowTextLengthW(hwnd) == 0:
+                    return True
+                if user32.GetWindowLongW(hwnd, -20) & 0x80:      # 工具視窗
+                    return True
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value == MY_PID:
+                    return True
             if dwmapi:
                 cloaked = wintypes.DWORD()
                 dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), 4)
@@ -891,7 +931,9 @@ def idle_seconds():
 
 # ---------------------------------------------------------------- 文字（缺字自動換字型）
 class Text:
-    CHAINS = (("msjh.ttc", "mingliu.ttc", "arial.ttf"), ("seguisym.ttf",), ("seguiemj.ttf",))
+    # 0 粉圓體（圓圓的、可愛）、1 符號、2 彩色 emoji、3 微軟正黑體（粉圓體沒有的字）、4 韓文
+    CHAINS = ((str(BASE / "fonts" / "jf-openhuninn-2.1.ttf"), "msjh.ttc", "arial.ttf"), ("seguisym.ttf",), ("seguiemj.ttf",),
+              ("msjh.ttc", "mingliu.ttc"), ("malgun.ttf", "msyh.ttc"))                     # 4 韓文等其他字
 
     def __init__(self):
         self.fonts = {}
@@ -923,7 +965,7 @@ class Text:
         if ch not in self.has:
             choice = 0
             if ord(ch) > 0x2000 and not ch.isspace():
-                for idx in (0, 1, 2):
+                for idx in (0, 3, 4, 1, 2):
                     f = self.font(idx, 20)
                     if self._sig(f, ch, idx == 2) != self._sig(f, "\U0010FFFD", idx == 2):
                         choice = idx
@@ -1094,6 +1136,7 @@ class Item:
         self.y += self.vy
         if self.kind == "toy":
             self.world.ball_vs_equip(self, px, py)
+            self.world.ball_vs_pets(self)
         if self.x < self.L + 20 or self.x > self.R - 20:
             self.x = max(self.L + 20, min(self.x, self.R - 20))
             self.vx = -self.vx * 0.7
@@ -1138,11 +1181,29 @@ class Item:
         ax, ay = max(wx, fx), max(wy, fy)
         bx, by = min(wx + img.width, fx + fim.width), min(wy + img.height, fy + fim.height)
         if ax < bx and ay < by:
-            img.alpha_composite(fim.crop((ax - fx, ay - fy, bx - fx, by - fy)), (ax - wx, ay - wy))
+            # 只在「球有畫到的地方」蓋網子；其他地方原本籃框／球門自己就有網子，再蓋一次會疊成兩層、顏色變深
+            box = (ax - wx, ay - wy, bx - wx, by - wy)
+            net = fim.crop((ax - fx, ay - fy, bx - fx, by - fy))
+            net.putalpha(ImageChops.multiply(net.getchannel("A"), img.crop(box).getchannel("A")))
+            img.alpha_composite(net, box[:2])
+
+    def spun(self):
+        """轉過的球／道具：每 6 度一張存起來（滾來滾去角度一直重複，不用每格重轉）。"""
+        q = int(round(self.angle / 6)) % 60
+        if not q:
+            return self.img
+        cache = self.__dict__.setdefault("_spin", {})
+        if cache.get("src") is not self.img:                  # 換了圖（大小改變）：重新存
+            cache.clear()
+            cache["src"] = self.img
+        im = cache.get(q)
+        if im is None:
+            im = cache[q] = self.img.rotate(q * 6, resample=Image.BICUBIC, expand=True)
+        return im
 
     def render(self):
         S = self.S
-        spr = self.img.rotate(self.angle, resample=Image.BICUBIC, expand=True) if self.angle else self.img
+        spr = self.spun()
         tr, fx = getattr(self, "fx_trail", []), getattr(self, "fx", 0)
         if not tr and fx <= 0:
             self.fx_drawn = False
@@ -1191,7 +1252,7 @@ class Item:
                            (sx, sy + sz), (sx - sz * .3, sy + sz * .3), (sx - sz, sy), (sx - sz * .3, sy - sz * .3)], fill=c)
         img.alpha_composite(spr, (int(cx - x0 - spr.width / 2), int(cy - y0 - spr.height / 2)))
         self.cover_rim(img, x0, y0)
-        self.lw.show(img, x0, y0)
+        self.lw.show(img, x0, y0, crop=True)
 
     def remove(self):
         if self.alive:
@@ -1556,7 +1617,7 @@ class Equip:
             tube(sorted(back_half, key=lambda p: math.atan2(p[2] - rw, p[0])), 2.6, red, red_d)
             front_img = Image.new("RGBA", img.size, (0, 0, 0, 0))
             fd = ImageDraw.Draw(front_img)
-            rings = [ring(rv - h * .11 * k, rr * s_) for k, s_ in enumerate((1, .86, .74, .66, .62))]
+            rings = [ring(rv - h * .085 * k, rr * s_) for k, s_ in enumerate((1, .86, .75, .68, .64))]      # 網子長度約 0.34 個角色高
             for k in range(len(rings) - 1):
                 ra, rb = rings[k], rings[k + 1]
                 for i in range(N):
@@ -2037,6 +2098,7 @@ class Pet:
         w.bind("<Button-2>", lambda e: self.poke())
         w.bind("<Button-3>", lambda e: self.world.show_menu(self, e))
         w.bind("<Motion>", self.on_hover)
+        w.bind("<MouseWheel>", self.on_wheel)
         w.bind("<Escape>", lambda e: self.world.exit_giant())
 
     # ---------- 基本 ----------
@@ -2343,6 +2405,8 @@ class Pet:
     def update_idle(self):
         w = self.world
         if self.giant:
+            if w.music_on and self.t % int((3.2 if w.giant_resting else 1.4) * FPS) == 0:
+                self.emit("note")
             if self.pose == "idle" and self.variant == 0 and self.char.has("idle-blink") and not self.blink \
                     and random.random() < 1 / 110:
                 self.blink = 4
@@ -2367,6 +2431,12 @@ class Pet:
                 self.state = "walk"
                 self.set_pose("idle", 0)
             return
+        pal = getattr(self, "pushing", None)
+        if pal is not None:                                   # 在幫忙推鞦韆：站在旁邊等她盪過來
+            if pal.state != "swing" or getattr(pal, "pusher", None) is not self:
+                self.pushing = None
+            else:
+                return
         if getattr(self, "pressed", False):                  # 最底下被踩住：只會偶爾慢慢走幾步，上面的跟著走
             if random.random() < 1 / (8 * FPS):
                 d = random.choice((-1, 1))
@@ -2375,11 +2445,26 @@ class Pet:
                 self.go_to(self.x + d * random.uniform(60, 160), .9)
             return
         if getattr(self, "queued", False):              # 排隊溜滑梯：乖乖站著等
+            self.dancing = False
             if self.t % int(9 * FPS) == int(4 * FPS) and random.random() < .4:
                 self.say("queue")
             return
-        if w.match_idle(self):                           # 鬥牛、PK 中：去撿球、站好位置
+        if w.match_idle(self):                           # 鬥牛、PK 中：去撿球、站好位置（比跳舞優先）
+            self.dancing = False
             return
+        if self.dance_now():                             # 放音樂：一陣一陣地跟著跳舞
+            if self.t % int(1.1 * FPS) == 0:
+                opts = [q for q in ("happy", "hum", "proud") if self.char.has(q)] or ["idle"]
+                self.set_pose(random.choice(opts))
+            if random.random() < 1 / (25 * FPS):
+                self.say("music")
+            if self.t % int(1.6 * FPS) == int(.8 * FPS) and random.random() < .5:
+                self.emit("note")
+            self.dancing = True
+            return
+        if getattr(self, "dancing", False):              # 跳完一段：回到平常的樣子，可以去做別的事
+            self.dancing = False
+            self.set_pose("idle", 0)
         if self.pose == "idle" and self.variant == 0 and self.char.has("idle-blink") and not self.blink \
                 and random.random() < 1 / 110:
             self.blink = 4
@@ -2636,8 +2721,9 @@ class Pet:
                 self.vx *= 0.7
             else:
                 self.soft_land = False
-                hard = self.impact > 16 and not self.plat and not soft
-                flew, self.flying = self.flying, False
+                slam, self.slam = getattr(self, "slam", False), False
+                hard = (self.impact > 16 and not self.plat and not soft) or slam
+                flew, self.flying = self.flying and not slam, False
                 self.impact = 0
                 self.vx = self.vy = 0
                 self.theta = 0
@@ -2654,7 +2740,11 @@ class Pet:
                         self.burst("sparkle", 5)
                         self.act("happy", 2.2, "fly_land", force=True)
                     elif hard:
-                        self.act("dizzy", 2.6, "land", then=self.show_anger)
+                        if slam:                                 # 被你從空中壓下來：摔得眼冒金星
+                            self.dizzy_until = w.tick + int(3 * FPS)
+                            w.stat("dizzy")
+                            self.burst("sweat", 4)
+                        self.act("dizzy", 3.2 if slam else 2.6, "land", then=self.show_anger)
                     elif self.anger_level() or self.sulking:
                         self.show_anger()
                     elif w.study:
@@ -3162,13 +3252,13 @@ class Pet:
         return img
 
     def rotated(self, spr, ang):
-        """轉過的立繪存起來重複用（搖擺、盪鞦韆的角度一直重複）；角度取到 0.5 度，最多留 32 張。"""
-        q = round(ang * 2) / 2
+        """轉過的立繪存起來重複用（搖擺、跳舞、盪鞦韆的角度一直重複）；角度取到 1 度（看不出差別），最多留 64 張。"""
+        q = float(round(ang))
         cache = self.__dict__.setdefault("_rot", {})
         key = (id(spr), q)
         im = cache.get(key)
         if im is None:
-            if len(cache) >= 32:
+            if len(cache) >= 64:
                 cache.pop(next(iter(cache)))
             im = cache[key] = spr.rotate(q, resample=Image.BILINEAR, expand=True)
         else:
@@ -3192,8 +3282,11 @@ class Pet:
         if self.card_lock:
             return 0, 0, 0
         moving = self.state in ("walk", "chase", "race", "tag") and not (self.follow and abs(cursor_pos()[0] - self.x) < 60)
-        m = "waddle" if moving else MOTION.get(self.pose)
         t = self.t
+        if self.state == "idle" and self.world.music_on and getattr(self, "dancing", False):
+            beat = self.world.tick * .26 + hash(self.base_id) % 7     # 大家同一個拍子，各自錯開一點點
+            return 4 * math.sin(beat / 2), -abs(math.sin(beat)) * 12, 7 * math.sin(beat / 2)
+        m = "waddle" if moving else MOTION.get(self.pose)
         if m == "jump":
             return 0, (-abs(math.sin(t * .2)) * 16 if t < 32 else 0), 0
         if m == "hop":
@@ -3225,6 +3318,7 @@ class Pet:
 
     def render(self):
         if self.giant:
+            self.rsig = None
             return self.render_giant()
         w = self.world
         spr = self.current_image()
@@ -3242,7 +3336,8 @@ class Pet:
             d = ImageDraw.Draw(img)
             if self.bubble:
                 self.draw_bubble(img, S, max(60, int(pv - reach * .6)))
-            self.lw.show(img, gx - pv, gy - pv)
+            self.lw.show(img, gx - pv, gy - pv, crop=True)
+            self.rsig = None
             return
         W, H = max(w.win_w, sw + 40), max(w.win_h, sh + 130)    # 躺著、撲球的圖比較寬
         img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -3258,6 +3353,7 @@ class Pet:
                 wx = (self.L - (W // 2 - sw // 2) - hide) if self.hide_kind == "left" \
                     else (self.R - (W // 2 + sw - sw // 2) + hide)
             self.lw.show(img, wx, self.y - foot)
+            self.rsig = None
             return
         if self.state == "hoop_peek":
             clip = self.hoop_clip()
@@ -3269,6 +3365,7 @@ class Pet:
             if self.bubble:
                 self.draw_bubble(img, W, foot - sh)
             self.lw.show(img, wx, self.y - foot)
+            self.rsig = None
             return
         dx, dy, ang = self.motion()
         if self.state == "air" and abs(self.theta) > .02:
@@ -3285,6 +3382,17 @@ class Pet:
         elif self.state == "tramp":
             dx, dy, ang = 0, 0, math.degrees(self.theta)
         top = int(foot - sh + dy)
+        if self.state == "edge":
+            wx = self.L - (W // 2 - sw // 2) if self.edge == "left" else self.R - (W // 2 + sw - sw // 2)
+        else:
+            wx = self.x - W // 2
+        wy = self.y - foot
+        # 畫面跟上一格一模一樣（同一張圖、同樣的偏移和角度、同一句話、沒有小特效）：不用重畫，頂多挪一下位置
+        sig = None if (self.parts or self.state == "swing") else             (id(spr), W, H, int(dx), int(dy), round(ang), self.state, self.bubble, self.accent, self.world.text_scale)
+        if sig is not None and sig == getattr(self, "rsig", None):
+            self.lw.move(wx + self.lw.off[0], wy + self.lw.off[1])
+            return
+        self.rsig, self.rspr = sig, spr                      # rspr：留著那張圖，id 才不會被別的圖拿去用
         if ang:
             # 只轉角色本身那一小塊（以前是整個視窗大小一起轉，很吃效能），再放到「繞著支點轉」之後的位置
             mid = self.state in ("air", "tramp")
@@ -3297,11 +3405,6 @@ class Pet:
             img.alpha_composite(rot, (int(px + rx - rot.width / 2), int(py + ry - rot.height / 2)))
         else:
             img.alpha_composite(spr, (int(W // 2 - sw // 2 + dx), top))
-        if self.state == "edge":
-            wx = self.L - (W // 2 - sw // 2) if self.edge == "left" else self.R - (W // 2 + sw - sw // 2)
-        else:
-            wx = self.x - W // 2
-        wy = self.y - foot
         if self.state == "swing":                        # 她在兩個架子中間：近的那個 A 字架擋在她前面
             sw_eq = w.equip.get("swing")
             fr = getattr(sw_eq, "front", None) if sw_eq else None
@@ -3310,14 +3413,31 @@ class Pet:
                 fx, fy = int(fx), int(fy)
                 ax, ay = max(int(wx), fx), max(int(wy), fy)
                 bx, by = min(int(wx) + img.width, fx + fim.width), min(int(wy) + img.height, fy + fim.height)
-                if ax < bx and ay < by:
-                    img.alpha_composite(fim.crop((ax - fx, ay - fy, bx - fx, by - fy)), (ax - int(wx), ay - int(wy)))
+                if ax < bx and ay < by:                  # 只蓋在她身上（其他地方鞦韆自己有畫，再蓋會疊兩層）
+                    box = (ax - int(wx), ay - int(wy), bx - int(wx), by - int(wy))
+                    fc = fim.crop((ax - fx, ay - fy, bx - fx, by - fy))
+                    fc.putalpha(ImageChops.multiply(fc.getchannel("A"), img.crop(box).getchannel("A")))
+                    img.alpha_composite(fc, box[:2])
         d = ImageDraw.Draw(img)
         if self.parts:
             self.draw_parts(d)
         if self.bubble:
             self.draw_bubble(img, W, max(0, top))
-        self.lw.show(img, wx, wy)
+        self.lw.show(img, wx, wy, crop=True)
+
+    def dance_now(self):
+        """放音樂時要不要跳舞：跳 12～25 秒、休息 15～35 秒輪流（休息時照常去玩、找事做）；比賽中、賭氣、站在視窗上不跳。"""
+        w = self.world
+        if not w.music_on or self.plat or self.sulking or w.in_match(self):
+            return False
+        now = w.tick
+        if now < getattr(self, "dance_end", 0):
+            return True
+        if now < getattr(self, "dance_next", 0):
+            return False
+        self.dance_end = now + int(random.uniform(12, 25) * FPS)
+        self.dance_next = self.dance_end + int(random.uniform(15, 35) * FPS)
+        return True
 
     def update_swing(self):
         w = self.world
@@ -3331,6 +3451,7 @@ class Pet:
         else:                                            # 慢慢停下來
             self.swing_amp = max(0.0, self.swing_amp - .0035)
         ang = self.swing_amp * math.sin(2 * math.pi * T / 2.4)
+        self.swing_helper(e, T, ang)
         e.anim = ang
         e.dyn_show(ang)
         m = e.dims()
@@ -3349,8 +3470,42 @@ class Pet:
             return self.end_swing()
         self.dirty = True
 
+    def swing_helper(self, e, T, ang):
+        """有人在旁邊閒著的話，有時候會過來幫忙推：每推一下盪得更高。"""
+        w = self.world
+        q = getattr(self, "pusher", None)
+        if q is None:
+            if self.swing_t == int(1.2 * FPS) and random.random() < .6:
+                q = w.match_partner(self)
+                if q is not None and abs(q.x - self.x) < 800 and not getattr(q, "pushing", None):
+                    m = e.dims()
+                    rest_x = e.P3(0, m["sv"], 0)[0]
+                    side = -1 if q.x < rest_x else 1
+                    self.pusher, q.pushing = q, self
+                    q.push_spot = rest_x + side * w.sprite_h * .62
+                    q.push_side = side
+                    q.go_to(q.push_spot, 2.6)
+                    q.then = None
+            return
+        if w.pets.get(q.base_id) is not q or getattr(q, "pushing", None) is not self or q.state not in ("idle", "walk", "act"):
+            self.pusher = None
+            return
+        k = int((T - .6) / 2.4)                           # 每一個來回推一次（盪到她那一邊、回頭的時候）
+        if q.state == "idle" and abs(q.x - q.push_spot) < 12 and k != getattr(self, "push_k", -1) and ang * q.push_side > .1:
+            self.push_k = k
+            q.set_pose("happy")
+            q.act("happy", .7, "push" if random.random() < .45 else None)
+            if T < self.swing_dur * .55:
+                self.swing_amp = min(.85, self.swing_amp + .07)
+
     def end_swing(self, quiet=False):
         w = self.world
+        q = getattr(self, "pusher", None)
+        if q is not None:
+            self.pusher = None
+            q.pushing = None
+            if not quiet and w.pets.get(q.base_id) is q and random.random() < .5:
+                q.say("push_end")
         w.release(w.equip.get("swing"), self)
         self.swing_ang = 0
         self.y = self.floor
@@ -3391,6 +3546,12 @@ class Pet:
             ang = e.anim or 0.0
         u = self.see_side * m["Lp"] * .8
         pu, pv, pw_ = e.plank_pt(m, u, m["pv"] + m["pt"], m["pw"] / 2, ang)
+        if ready and not self.char.has("swing"):                 # 站著玩的：翹到高的那邊開心，低的那邊普通
+            want = "happy" if pv > m["pv"] + m["pt"] + 4 else "idle"
+            if self.pose != want:
+                self.set_pose(want)
+        if ready and pv > m["pv"] + m["pt"] + m["Lp"] * .15 and self.t % 20 == 0:
+            self.emit("sparkle")
         sx, sy = e.P3(pu, pv, pw_)
         sh = self.current_image().size[1]
         self.x = sx
@@ -3503,25 +3664,26 @@ class Pet:
         """巨大化時、或撒嬌把滑鼠拉過來之後，滑鼠在頭上來回晃＝一直摸。"""
         if self.press or not (self.giant or time.time() < self.cling_until):
             return
+        ex, ey = e.x + self.lw.off[0], e.y + self.lw.off[1]            # 視窗有裁掉透明邊：換回原本的座標
         if self.giant:
-            on_head = self.zone(e.x, e.y) == "head"
+            on_head = self.zone(ex, ey) == "head"
         else:
             sw, sh = self.current_image().size
             W, H = self.world.win_w, self.world.win_h
-            on_head = abs(e.x - W / 2) < sw * .4 and H - 4 - sh <= e.y <= H - 4 - sh * .65
+            on_head = abs(ex - W / 2) < sw * .4 and H - 4 - sh <= ey <= H - 4 - sh * .65
         if not on_head:
             self.last_hover = None
             return
         now = self.world.tick
         if self.last_hover is not None:
             lx, ldir = self.last_hover
-            dr = 1 if e.x > lx + 3 else -1 if e.x < lx - 3 else ldir
+            dr = 1 if ex > lx + 3 else -1 if ex < lx - 3 else ldir
             if dr != ldir and ldir:
                 self.strokes = [t for t in self.strokes if now - t < 40] + [now]
                 self.burst("heart", 1)
-            self.last_hover = (e.x, dr)
+            self.last_hover = (ex, dr)
         else:
-            self.last_hover = (e.x, 0)
+            self.last_hover = (ex, 0)
         if len(self.strokes) >= 6:
             self.strokes = []
             if self.state == "act" and self.pose == "pat":
@@ -3650,7 +3812,7 @@ class Pet:
         self.press = None
         if self.giant:
             cx, cy, r = self.close_btn()
-            if (e.x - cx) ** 2 + (e.y - cy) ** 2 <= (r + 6) ** 2:
+            if (e.x + self.lw.off[0] - cx) ** 2 + (e.y + self.lw.off[1] - cy) ** 2 <= (r + 6) ** 2:
                 self.world.exit_giant()
                 return
         if self.dragging:
@@ -3665,7 +3827,7 @@ class Pet:
             return
         if self.click_job:
             self.world.root.after_cancel(self.click_job)
-        self.click_xy = (e.x, e.y)
+        self.click_xy = (e.x + self.lw.off[0], e.y + self.lw.off[1])
         self.click_job = self.world.root.after(230, self.single_click)
 
     def single_click(self):
@@ -3697,7 +3859,48 @@ class Pet:
         elif self.state in ("idle", "walk", "act", "study"):
             self.act("happy", 1.4)
 
+    def on_wheel(self, e):
+        """在她身上往上滾滾輪：垂直起飛；在空中再滾，飛得更高。在空中往下滾：直直被壓下去，落地摔暈。"""
+        if e.delta < 0:
+            if self.state == "air" and not self.giant and not self.press:
+                self.vx = 0.0
+                self.vy = min(42.0, max(self.vy, 0.0) + 16)
+                self.theta = 0.0
+                self.air_spin = 0.0
+                self.flying = False
+                self.wheel_fly = False
+                self.slam = True
+                self.set_pose("surprised")
+                self.dirty = True
+            return
+        if self.giant or self.press or getattr(self, "pressed", False) or getattr(self, "pushing", None):
+            return
+        if self.state == "air" and getattr(self, "wheel_fly", False):
+            self.vy = max(-40, self.vy - 7)                    # 空中再推一把
+            return
+        if self.state not in ("idle", "walk", "act", "sleep", "sulk", "chase") or self.world.in_match(self):
+            return
+        self.touch()
+        self.world.interrupt(self)
+        self.vx, self.vy = 0.0, -24.0
+        self.theta = 0.0
+        self.state = "air"
+        self.wheel_fly = True
+        self.flying = not self.sulking and self.anger < 45
+        self.air_spin = 0.0
+        self.set_pose("happy" if self.flying else "surprised")
+        now = time.time()
+        if now > getattr(self, "wheel_cd", 0):                   # 連續滾不要一直講話、一直加好感
+            self.wheel_cd = now + 4
+            self.world.stat("fly")
+            if self.flying:
+                self.say("fly", force=True, secs=2)
+                self.world.add_love(self, 1)
+        self.dirty = True
+
     def release_drag(self, e):
+        self.wheel_fly = False
+        self.slam = False
         sh = self.current_image().size[1]
         if e.x_root <= self.L + 30 and self.char.has("edge_left"):
             self.enter_edge("left")
@@ -3738,11 +3941,11 @@ class World:
         self.root = tk.Tk()
         self.root.withdraw()
         try:
-            import tkinter.font as tkfont
+            use_cute_font(self.root)
             for name in ("TkDefaultFont", "TkMenuFont", "TkTextFont", "TkHeadingFont", "TkCaptionFont",
                          "TkSmallCaptionFont", "TkIconFont", "TkTooltipFont"):
-                tkfont.nametofont(name).configure(family="Microsoft JhengHei")
-            self.root.option_add("*Font", ("Microsoft JhengHei", 10))
+                tkfont.nametofont(name).configure(family=FONT)
+            self.root.option_add("*Font", (FONT, 10))
         except Exception:
             pass
         self.root.report_callback_exception = lambda *a: log_error(*a)
@@ -3781,6 +3984,8 @@ class World:
         self.duel = None                   # 兩隻鬥牛
         self.pk = None                     # 射門 PK（一隻守門）
         self.user_streak = {"籃球": 0, "足球": 0}
+        self.player = None                 # 音樂播放器視窗
+        self.music_on = False              # 正在放音樂：大家跳舞
         self.update_info = None            # (tag, 網址)：GitHub 上有比較新的版本
         self.update_told = None
         self.cling_job = None
@@ -4093,7 +4298,7 @@ class World:
                     long_ = True
                 if 0 < left <= 10 and td.get("warned") != td["at"] and long_:   # 剛加就快到的不用預告
                     td["warned"] = td["at"]
-                    p = self.todo_pet()
+                    p = self.todo_pet(td.get("by"))
                     if p:
                         p.touch()
                         p.act("surprised", 3)
@@ -4104,7 +4309,7 @@ class World:
                     if td.get("repeat", "none") != "none":          # 重複的：排好下一次
                         td["at"] = next_due(due, td["repeat"], now).isoformat(timespec="seconds")
                         td["notified"] = td["warned"] = ""
-                    p = self.todo_pet()
+                    p = self.todo_pet(td.get("by"))
                     if p:
                         p.touch()
                         p.burst("sparkle", 5)
@@ -4127,7 +4332,7 @@ class World:
                 continue
             if hm >= td["time"]:
                 td["notified"] = now.date().isoformat()
-                p = self.todo_pet()
+                p = self.todo_pet(td.get("by"))
                 if p:
                     p.touch()
                     p.burst("sparkle", 5)
@@ -4135,12 +4340,17 @@ class World:
                     p.say("todo_remind", force=True, secs=7, t=td["text"])
                 self.save()
 
-    def todo_pet(self):
-        """提醒待辦的那隻：桌面上沒人的話叫一隻出來（藏起來的時候也叫回來）。"""
+    def todo_pet(self, by=None):
+        """提醒待辦的那隻：有指定就是她（不在桌面上就叫她出來）；沒指定就隨便一隻，桌面上沒人就叫一隻出來。"""
         if self.hide_reasons:
             for k in list(self.hide_reasons):
                 if k != "fullscreen":
                     self.set_hidden(k, False)
+        if by in self.chars and not self.giant:
+            if by not in self.pets:
+                self.spawn(by, greet=False)
+            if by in self.pets:
+                return self.pets[by]
         p = self.pick_pet()
         if p is None and self.base_ids():
             cid = next((c for c in self.base_ids() if c == "claude"), self.base_ids()[0])
@@ -4221,6 +4431,8 @@ class World:
 
     def quit(self):
         self.mis_end()
+        if self.player is not None:
+            self.player.stop_file()
         self.save()
         if self.tray:
             try:
@@ -4631,13 +4843,15 @@ class World:
                 dr = 1 if it.x >= p.x else -1
                 it.vx = dr * random.uniform(6, 11)
                 it.vy = -random.uniform(5, 9)
+                it.kicked_by, it.kick_t = p, time.time()
                 p.act("happy", 1.2, "kick" if random.random() < 0.5 else None)
             p.next_action = self.tick + int(2 * FPS)
 
     # ---------- 遊樂器材 ----------
     def equip_order(self):
         """器材永遠在小可愛和玩具的後面：找出她們之中最下面的那個視窗，把器材塞到它底下。"""
-        if not self.equip or getattr(self, "menu_open", False):
+        pl = self.player if self.player is not None and not self.giant else None
+        if not (self.equip or pl) or getattr(self, "menu_open", False):
             return
         ours = {p.lw.hwnd for p in self.pets.values()} | {it.lw.hwnd for it in self.items if it.alive}
         lowest, h, n = None, user32.GetTopWindow(None), 0
@@ -4648,6 +4862,12 @@ class World:
                 lowest = h
             h = user32.GetWindow(h, 2)                            # GW_HWNDNEXT
             n += 1
+        if lowest and pl is not None:                       # 播放器：小可愛下面、器材上面
+            try:
+                user32.SetWindowPos(pl.hwnd(), wintypes.HWND(lowest), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+                lowest = pl.hwnd()
+            except tk.TclError:
+                pass
         if lowest:
             for e in self.equip.values():
                 top_ = lowest
@@ -4817,6 +5037,29 @@ class World:
                 return ya + (yb - ya) * (x - xa) / (xb - xa)
         return None
 
+    def ball_vs_pets(self, it):
+        """飛很快的球砸到站在旁邊的小可愛：球彈開，她嚇一跳。（投的、踢的那隻，還有正在比賽的不算）"""
+        if math.hypot(it.vx, it.vy) < 9 or it.held:
+            return
+        cy = it.y - it.half
+        now = time.time()
+        for q in self.pets.values():
+            if q.giant or q.state not in ("idle", "walk", "act", "chase", "sleep") or self.in_match(q) \
+                    or q is getattr(it, "shooter", None) or (q is getattr(it, "kicked_by", None) and now - it.kick_t < 1.2):
+                continue
+            sh = q.current_image().size[1]
+            if abs(it.x - q.x) < self.sprite_h * .2 + it.half * .5 and q.y - sh * .92 < cy < q.y - sh * .08:
+                if now < getattr(q, "bonk_cd", 0):
+                    continue
+                q.bonk_cd = now + 2.5
+                it.vx = -it.vx * .45 + math.copysign(1.5, it.x - q.x)
+                it.vy = -abs(it.vy) * .3 - 2
+                q.touch()
+                if q.state == "sleep":
+                    q.state = "idle"
+                q.act("surprised", 1.4, "bonk", force=True)
+                break
+
     def user_scored(self, it):
         """你自己丟進去的：連進幾球、破紀錄，大家幫你歡呼。"""
         n = self.user_streak[it.name] = self.user_streak.get(it.name, 0) + 1
@@ -4954,12 +5197,14 @@ class World:
                     self.queue_spot(q)
 
     def play_equip(self, p, kind, auto=False):
-        """你叫她去玩：溜滑梯、投籃、射門、躲籃框、鞦韆、蹺蹺板、彈跳床、去睡覺。"""
-        if p.giant or p.state in ("drag", "air", "leaving", "ladder", "slide_top", "slide", "swing", "seesaw", "tramp"):
+        """你叫她去玩：溜滑梯、投籃、射門、躲籃框、鞦韆、蹺蹺板、彈跳床、去睡覺。
+        你叫的（不是她自己想去的）去不了的時候，她會跟你說為什麼。"""
+        why = self.cant_play(p)
+        if why is not None:
+            if why and not auto:
+                p.say(text=why, force=True)
             return False
         if kind in ("swing", "seesaw", "tramp"):
-            if self.in_match(p) or getattr(p, "queued", False):
-                return False
             if p.state == "edge":
                 p.leave_edge()
             if p.state == "hoop_peek":
@@ -4969,9 +5214,10 @@ class World:
                 return False
             p.follow = False
             p.state = "idle"
+            busy_why = self.equip_busy_why(p, kind)
             ok = {"swing": self.go_swing, "seesaw": self.go_seesaw, "tramp": self.go_tramp}[kind](p)
             if not ok and not auto:
-                p.say(text="有人在用了啦～", force=True)
+                p.say(text=busy_why or "現在不能玩耶……", force=True)
             elif ok and not auto:
                 p.touch()
                 p.say(text=random.choice(["好～", "走！", "我去玩～"]), force=True)
@@ -4998,6 +5244,7 @@ class World:
                 it = self.drop_item_at(ball, p.x + random.choice((-1, 1)) * 120, p.floor - self.sprite_h)
                 it = it or next((i for i in self.items if i.alive and i.name == ball), None)
             if not it:
+                p.say(text="找不到球耶……", force=True)
                 return
             if kind in ("duel", "pk"):
                 if self.duel or self.pk:
@@ -5007,11 +5254,58 @@ class World:
                     p.say(text="沒有人可以一起玩……", force=True)
                     return
                 if not (self.start_duel(p, it) if kind == "duel" else self.start_pk(p, it)):
+                    p.say(text="現在湊不成比賽耶……", force=True)
                     return
             p.target = it
             p.go_to(it.x, 2.6, "chase")
             if kind not in ("duel", "pk"):
                 p.say(text=random.choice(["好～", "看我的！", "走！"]), force=True)
+
+    def cant_play(self, p):
+        """現在不能去玩器材的原因（她會說出來）；可以去就回傳 None。空字串＝不能去但不用說。"""
+        st = p.state
+        if p.giant:
+            return ""
+        if st == "leaving":
+            return ""
+        if st in ("drag", "air"):
+            return "先放我下來啦～"
+        names = {"ladder": "溜滑梯", "slide_top": "溜滑梯", "slide": "溜滑梯", "swing": "鞦韆", "seesaw": "蹺蹺板", "tramp": "彈跳床"}
+        if st in names:
+            return f"我正在玩{names[st]}耶，等我玩完～"
+        if self.in_match(p):
+            return "我在比賽耶，等打完再說～"
+        if getattr(p, "queued", False):
+            return "我在排隊溜滑梯～"
+        if st == "stack" or getattr(p, "pressed", False):
+            return "我在疊高高耶，動不了啦～"
+        if st in ("race", "tag", "hide"):
+            return "我們在玩遊戲耶，等一下～"
+        if st == "study":
+            return "我在陪你讀書耶～"
+        if getattr(p, "pushing", None) is not None:
+            return "我在幫忙推鞦韆～"
+        return None
+
+    def equip_busy_why(self, p, kind):
+        """鞦韆、蹺蹺板、彈跳床去不了的原因。"""
+        e = self.equip.get(kind)
+        if not e:
+            return "現在沒有擺這個器材耶～"
+        b = e.busy
+        if kind == "seesaw":
+            riders = b if isinstance(b, list) else []
+            if p in riders:
+                return "我已經在蹺蹺板上了啦～"
+            if len(riders) >= 2:
+                return "蹺蹺板坐滿了，等她們玩完～"
+            return None
+        if b is p:
+            return "我已經要去玩了啦～"
+        if b is not None:
+            who = self.disp_name(b.base_id) if hasattr(b, "base_id") else "別人"
+            return f"{who}在玩{EQUIP.get(kind, '')}，等她玩完～"
+        return None
 
     def release(self, e, p):
         """她不玩了：器材空出來，會動的那層收起來、靜態圖換回有座位的。"""
@@ -5303,8 +5597,13 @@ class World:
             p.say(text=f"今日運勢：{luck}！\n幸運物：{item}\n{advice}", force=True, secs=7)
         self.later(p, 1800, show)
 
-    def remind_in(self, p, minutes):
-        self.reminders.append((time.time() + minutes * 60, p.base_id, minutes))
+    def remind_in(self, p, minutes, text=None):
+        """幾分鐘後提醒你：變成一筆待辦（由她來提醒），在「待辦」分頁看得到。"""
+        due = (datetime.datetime.now() + datetime.timedelta(minutes=minutes)).replace(microsecond=0)
+        self.settings.setdefault("todos", []).append({
+            "text": text or "時間到囉！", "time": due.strftime("%H:%M:%S"), "at": due.isoformat(timespec="seconds"),
+            "done": False, "notified": "", "by": p.base_id, "made": datetime.datetime.now().isoformat(timespec="seconds")})
+        self.save()
         p.act("happy", 1.5)
         p.say(text=f"好，{dur_text(minutes * 60)}後叫你！", force=True)
 
@@ -5358,7 +5657,7 @@ class World:
             return
         try:
             self.tick += 1
-            if self.equip and self.tick % 30 == 0:            # 器材一直待在小可愛後面
+            if (self.equip or self.player is not None) and self.tick % 30 == 0:   # 器材、播放器一直待在小可愛後面
                 self.equip_order()
             if self.tick % 10 == 3 and self.slide_queue:
                 self.slide_queue_tick()
@@ -5367,7 +5666,7 @@ class World:
             if self.tick % 15 == 5 and (self.duel or self.pk):
                 self.match_tick()
             if self.tick % 15 == 1:
-                self.wins = list_windows() if self.settings.get("climb", True) else []
+                self.wins = list_windows(self.climb_extra()) if self.settings.get("climb", True) else []
             self.poll_events()
             if self.hide_reasons:
                 self.next_frame(t0)
@@ -5977,12 +6276,12 @@ class World:
             icon = Image.new("RGBA", (64, 64), (232, 118, 58, 255))
         q = self.events
         M = pystray.MenuItem
-        self.tray = pystray.Icon("DesktopPet", icon, "DesktopPet", pystray.Menu(
+        self.tray = pystray.Icon("AIchanDesk", icon, "AIchanDesk - 你的桌面小可愛們", pystray.Menu(
             M("開啟控制面板", lambda: q.put("panel"), default=True),
             M("藏起來 / 叫回來（Ctrl+Alt+P）", lambda: q.put("toggle")),
             M("叫大家回到畫面上", lambda: q.put("home")),
-            M("休息模式 💤", lambda: q.put("rest")),
-            M("拍照 📸", lambda: q.put("photo")),
+            M("休息模式", lambda: q.put("rest")),
+            M("拍照", lambda: q.put("photo")),
             M(lambda item: f"下載新版本 {self.update_info[0]}" if self.update_info else "下載新版本",
               lambda: q.put("update"), visible=lambda item: bool(self.update_info)),
             M("全部掰掰（關閉）", lambda: q.put("quit"))))
@@ -5998,7 +6297,7 @@ class World:
         def work():
             try:
                 import urllib.request
-                req = urllib.request.Request(RELEASE_API, headers={"User-Agent": "DesktopPet",
+                req = urllib.request.Request(RELEASE_API, headers={"User-Agent": "AIchanDesk",
                                                                    "Accept": "application/vnd.github+json"})
                 data = json.loads(urllib.request.urlopen(req, timeout=10).read().decode("utf-8"))
                 tag = data.get("tag_name", "")
@@ -6104,6 +6403,60 @@ class World:
             fade()
         except tk.TclError:
             pass
+
+    def climb_extra(self):
+        """自己的視窗裡可以讓她們爬上去的：音樂播放器（開著、沒縮小的時候）。"""
+        pl = self.player
+        try:
+            if pl is not None and pl.top.state() == "normal" and not getattr(pl, "minimized", False):
+                return (pl.hwnd(),)
+        except tk.TclError:
+            pass
+        return ()
+
+    def open_music(self, cid=None):
+        """誰來播音樂：請一隻當 DJ（沒指定就是上次那隻）。播放器開著的話換 DJ，音樂不會斷。"""
+        cid = cid or self.settings.get("music_dj") or "claude"
+        if cid not in self.chars:
+            cid = "claude" if "claude" in self.chars else next(iter(self.chars))
+        if cid not in self.pets and not self.giant:
+            self.spawn(cid, greet=False)
+        if self.player is None:
+            self.player = MusicPlayer(self, cid)
+            self.music_dj_changed(cid)
+        elif cid != self.player.cid:
+            self.player.set_dj(cid)
+        self.player.show()
+
+    def music_dj_changed(self, cid):
+        p = self.pets.get(cid)
+        if p and p.state in ("idle", "walk", "act") and not p.giant:
+            p.touch()
+            p.act("happy", 1.8, "dj_start", force=True)
+        elif p:
+            p.say("dj_start", force=True)
+
+    def music_ui(self):
+        """音樂的狀態變了（巨大化、休息時用的就是播放器本身，這裡不用多做什麼）。"""
+
+    def music_state(self, on):
+        """音樂開始／停下來：大家開始跳舞／停下來。"""
+        self.music_ui()
+        if on == self.music_on:
+            return
+        self.music_on = on
+        for p in self.pets.values():
+            p.dirty = True
+            if not on and p.state == "idle" and p.pose in ("happy", "hum"):
+                p.set_pose("idle", 0)
+
+    def music_song(self, title):
+        """換歌：有一隻頭上冒出歌名。"""
+        # 換歌：只有現在當 DJ 的那隻在桌面上才報歌名；她不在（回家了、大家藏起來），音樂照放、只是沒人報
+        dj = self.pets.get(self.player.cid) if self.player is not None else None
+        if dj is not None and not self.hide_reasons and (not self.giant or dj.giant):
+            dj.say("music_new", force=True, secs=3.5, t=title)
+        self.music_ui()
 
     def open_update(self):
         import webbrowser
@@ -6280,7 +6633,7 @@ class World:
     # ---------- 選單 ----------
     def show_menu(self, p, e):
         """右鍵選單只放日常會用的；其他都在控制面板。"""
-        m = tk.Menu(self.root, tearoff=0)
+        m = PopMenu(self.root, tearoff=0)
         m.add_command(label=f"♥ {p.name}　Lv{self.love_level(p.base_id)} {self.love_title(p.base_id)}", state="disabled")
         m.add_separator()
         m.add_command(label="摸摸頭", command=p.pat)
@@ -6288,16 +6641,16 @@ class World:
         m.add_command(label="戳一下", command=p.poke)
         m.add_command(label="撒嬌", command=lambda: self.mischief(p))
         m.add_command(label="說說話", command=lambda: self.chat(p))
-        mean = tk.Menu(m, tearoff=0)
+        mean = PopMenu(m, tearoff=0)
         for label, key, amt, pose in TEASES:
             mean.add_command(label=label, command=lambda key=key, amt=amt, pose=pose: p.tease(key, amt, pose))
-        games = tk.Menu(m, tearoff=0)
+        games = PopMenu(m, tearoff=0)
         for label, fn, secs in self.game_list(p):
             if label.startswith(("猜拳", "抽卡", "今日運勢", "今天吃什麼", "講冷笑話")):
                 games.add_command(label=label, command=lambda fn=fn, secs=secs: self.enqueue(p, fn, secs))
         m.add_cascade(label="跟她玩", menu=games)
         if self.equip:
-            play = tk.Menu(m, tearoff=0)
+            play = PopMenu(m, tearoff=0)
             for kind, label in (("slide", "去溜滑梯"), ("swing", "去盪鞦韆"), ("seesaw", "去玩蹺蹺板"), ("tramp", "去跳彈跳床"),
                                 ("hoop", "去投籃"), ("duel", "找人鬥牛"), ("goal", "去射門"), ("pk", "找人當守門員"),
                                 ("peek", "躲到籃框後面")):
@@ -6318,17 +6671,17 @@ class World:
             if self.giant_resting:
                 m.add_command(label="不休息了", command=self.stop_rest)
             else:
-                m.add_command(label="休息 💤（顯示時間）", command=self.enter_rest)
+                m.add_command(label="休息（顯示時間）", command=self.enter_rest)
             m.add_command(label="結束巨大化", command=self.exit_giant)
         else:
             m.add_command(label="巨大化", command=lambda: self.enter_giant(p.base_id))
-            m.add_command(label="陪我休息 💤", command=lambda: self.enter_rest(p.base_id))
-        sz = tk.Menu(m, tearoff=0)
+            m.add_command(label="陪我休息", command=lambda: self.enter_rest(p.base_id))
+        sz = PopMenu(m, tearoff=0)
         for name in SIZES:
             sz.add_command(label=("✓ " if self.settings.get("size", "中") == name else "　") + name,
                            command=lambda n=name: self.set_size(n))
         m.add_cascade(label="大小", menu=sz)
-        who = tk.Menu(m, tearoff=0)
+        who = PopMenu(m, tearoff=0)
         for cid in self.base_ids():
             name = self.disp_name(cid)
             if cid in self.pets:
@@ -6336,30 +6689,33 @@ class World:
             else:
                 who.add_command(label=f"　{name}", command=lambda cid=cid: self.spawn(cid))
         m.add_cascade(label="叫誰來玩", menu=who)
-        throw = tk.Menu(m, tearoff=0)
+        throw = PopMenu(m, tearoff=0)
         for name in ITEMS:
             throw.add_command(label=name, command=lambda n=name: self.drop_item(n))
         if self.items:
             throw.add_separator()
             throw.add_command(label="全部收起來", command=lambda: [it.remove() for it in list(self.items)])
         m.add_cascade(label="丟東西給大家", menu=throw)
-        eq = tk.Menu(m, tearoff=0)
+        eq = PopMenu(m, tearoff=0)
         for kind, label in EQUIP.items():
             on = kind in self.equip
             eq.add_command(label=("✓ " if on else "　") + label, command=lambda k=kind, on=on: self.set_equip(k, not on))
         m.add_cascade(label="遊樂器材", menu=eq)
         m.add_command(label=f"讓{p.name}回家", command=lambda: self.dismiss(p))
-        m.add_command(label="拍照 📸", command=self.take_photo)
+        m.add_command(label="請她放音樂", command=lambda: self.open_music(p.base_id))
+        m.add_command(label="拍照", command=self.take_photo)
         m.add_command(label="開啟控制面板…", command=lambda: self.open_panel(p))
         if self.update_info:
-            m.add_command(label=f"下載新版本 {self.update_info[0]} ✨", command=self.open_update)
+            m.add_command(label=f"下載新版本 {self.update_info[0]}", command=self.open_update)
+        if getattr(self, "menu", None) is not None:
+            self.menu.close()
         self.menu_open = True
-        try:
-            m.tk_popup(e.x_root, e.y_root)
-        except tk.TclError:                  # 選單開著的時候程式被關掉
-            pass
-        finally:
+        self.menu = m
+
+        def closed():
             self.menu_open = False
+            self.menu = None
+        m.tk_popup(e.x_root, e.y_root, on_close=closed)
 
     # ---------- 巨大化 ----------
     def enter_giant(self, cid, rest=False):
@@ -6436,6 +6792,12 @@ class World:
                 setattr(self, win, None)
         if self.panel:
             self.panel.top.attributes("-topmost", False)
+        if self.player is not None:                                  # 播放器回到平常的位置：其他視窗上面、小可愛下面
+            try:
+                user32.SetWindowPos(self.player.hwnd(), wintypes.HWND(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+            except tk.TclError:
+                pass
+            self.root.after(50, self.equip_order)
         p._bub = None
         p.giant = False
         p.card_lock = None
@@ -6539,27 +6901,29 @@ class World:
             self.render_giant_bg()
 
     def giant_order(self):
-        """巨大化的上下層：背景（休息時蓋過工作列）< 角色 < 控制列 < 控制面板。"""
+        """巨大化、休息的上下層：背景（休息時蓋過工作列）< 角色 < 播放器 < 控制列 < 控制面板。"""
         if getattr(self, "menu_open", False):
             return
         if self.giant_resting and getattr(self, "giant_bg_lw", None):
             self.giant_bg_lw.raise_()
         if self.giant:
             self.giant.lw.raise_()
-        bar = getattr(self, "giant_bar", None)
-        if bar:
+
+        def up(top, need_visible=True):
             try:
-                hwnd = user32.GetParent(bar.top.winfo_id()) or bar.top.winfo_id()
-                user32.SetWindowPos(hwnd, wintypes.HWND(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
-            except tk.TclError:
-                pass
-        for pn in (self.panel, getattr(self, "mini", None)):          # 控制面板開著就浮在最上面
-            try:
-                if pn and pn.top.winfo_viewable():
-                    hwnd = user32.GetParent(pn.top.winfo_id()) or pn.top.winfo_id()
+                if top is not None and (not need_visible or top.winfo_viewable()):
+                    hwnd = user32.GetParent(top.winfo_id()) or top.winfo_id()
                     user32.SetWindowPos(hwnd, wintypes.HWND(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
             except tk.TclError:
                 pass
+        if self.player is not None:                                   # 播放器開著（沒縮小）浮在她上面，休息時也是
+            up(self.player.top)
+        bar = getattr(self, "giant_bar", None)
+        if bar:
+            up(bar.top, need_visible=False)
+        for pn in (self.panel, getattr(self, "mini", None)):          # 控制面板開著就浮在最上面
+            if pn:
+                up(pn.top)
 
     def owned_cards(self, cid):
         ch = self.chars[cid]
@@ -6654,6 +7018,1343 @@ class World:
 
 
 # ---------------------------------------------------------------- 巨大化的控制列
+MUSIC_EXT = {".mp3", ".mp4", ".m4a", ".aac", ".wav", ".wma", ".flac"}
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD), ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+
+class _PROPVARIANT(ctypes.Structure):
+    _fields_ = [("vt", wintypes.USHORT), ("r1", wintypes.USHORT), ("r2", wintypes.USHORT), ("r3", wintypes.USHORT),
+                ("val", ctypes.c_longlong), ("pad", ctypes.c_longlong)]
+
+
+class MediaPlayer:
+    """Windows 內建的 Media Foundation 播放器（MFPlay）：mp3、mp4、m4a、wav、wma、flac 都能播，只出聲音、不開影片視窗。
+    建立的時候就開始播；長度要等它讀完檔案才拿得到（剛開始會是 0）。打不開會丟 OSError。"""
+
+    _lib = None
+
+    def __init__(self, path):
+        if MediaPlayer._lib is None:
+            lib = ctypes.windll.mfplay
+            lib.MFPCreateMediaPlayer.argtypes = [wintypes.LPCWSTR, wintypes.BOOL, wintypes.DWORD, ctypes.c_void_p,
+                                                 wintypes.HWND, ctypes.POINTER(ctypes.c_void_p)]
+            lib.MFPCreateMediaPlayer.restype = ctypes.HRESULT
+            try:
+                ctypes.windll.ole32.CoInitializeEx(None, 2)
+            except OSError:
+                pass
+            MediaPlayer._lib = lib
+        self.obj = ctypes.c_void_p()
+        MediaPlayer._lib.MFPCreateMediaPlayer(path, True, 0, None, None, ctypes.byref(self.obj))
+        vt = ctypes.cast(self.obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        F = lambda i, *a: ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p, *a)(vt[i])
+        G, PV = ctypes.POINTER(_GUID), ctypes.POINTER(_PROPVARIANT)
+        self._play, self._pause = F(3), F(4)
+        self._setpos, self._getpos, self._getdur = F(7, G, PV), F(8, G, PV), F(9, G, PV)
+        self._state = F(13, ctypes.POINTER(ctypes.c_int))
+        self._vol = F(20, ctypes.c_float)
+        self._shutdown = F(38)
+        self._release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vt[2])
+        self._g = _GUID()
+
+    def _call(self, fn, *a):
+        try:
+            fn(self.obj, *a)
+            return True
+        except OSError:
+            return False
+
+    def length(self):
+        v = _PROPVARIANT()
+        return v.val // 10000 if self._call(self._getdur, ctypes.byref(self._g), ctypes.byref(v)) else 0
+
+    def position(self):
+        v = _PROPVARIANT()
+        return v.val // 10000 if self._call(self._getpos, ctypes.byref(self._g), ctypes.byref(v)) else 0
+
+    def seek(self, ms):
+        v = _PROPVARIANT()
+        v.vt, v.val = 20, int(ms) * 10000                  # VT_I8，單位 100 奈秒
+        return self._call(self._setpos, ctypes.byref(self._g), ctypes.byref(v))
+
+    def play(self):
+        return self._call(self._play)
+
+    def pause(self):
+        return self._call(self._pause)
+
+    def volume(self, v):
+        return self._call(self._vol, ctypes.c_float(max(0.0, min(1.0, v))))
+
+    def state(self):
+        """0 空的、1 停了、2 播放中、3 暫停、4 關掉了。"""
+        st = ctypes.c_int(-1)
+        self._call(self._state, ctypes.byref(st))
+        return st.value
+
+    def close(self):
+        if self.obj:
+            self._call(self._shutdown)
+            try:
+                self._release(self.obj)
+            except OSError:
+                pass
+            self.obj = ctypes.c_void_p()
+
+
+def mmss(ms):
+    sec = max(0, int(ms // 1000))
+    return f"{sec // 60:02d}:{sec % 60:02d}"
+
+
+def mix(c, d, t):
+    """兩個顏色混在一起：t＝0 是 c，t＝1 是 d。"""
+    return tuple(int(a + (b - a) * t) for a, b in zip(c, d))
+
+
+def hexrgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def rgbhex(c):
+    return "#%02x%02x%02x" % tuple(c[:3])
+
+
+def music_theme(accent):
+    """播放器的配色：全部從角色的代表色算出來（淡淡的底、亮一點的漸層、深一點的邊）。"""
+    a = hexrgb(accent)
+    W, K = (255, 255, 255), (40, 30, 30)
+    return {
+        "acc": a, "acc_l": mix(a, W, .38), "acc_ll": mix(a, W, .7), "acc_d": mix(a, K, .18),
+        "bg": mix(a, W, .94), "bg_top": mix(a, W, .8), "line": mix(a, W, .82), "tint": mix(a, W, .86),
+        "tint2": mix(a, W, .76), "shadow": mix(a, K, .25), "note": mix(a, W, .45),
+        "sel_top": mix(a, W, .9), "sel_bot": mix(a, W, .8), "sel_edge": mix(a, W, .62),
+        "text": (66, 52, 56), "muted": mix(mix(a, (120, 110, 115), .7), W, .2),
+    }
+
+
+def ramp(w, h, rising=True):
+    """橫向的漸層遮罩：rising＝從透明漸漸變不透明（左→右）。"""
+    m = Image.new("L", (w, h), 0)
+    d = ImageDraw.Draw(m)
+    for x in range(w):
+        a = int(255 * (x + 1) / w)
+        d.line([(x, 0), (x, h)], fill=a if rising else 255 - a)
+    return m
+
+
+class SongList(tk.Canvas):
+    """歌單：一張一張立體的圓角卡片。按住上下拖、或滾滾輪來捲（放手會順順地再滑一段）；
+    歌比畫面多的時候是一圈的，捲過最後一首會接回第 1 首。
+    點一下選起來，點兩下播放；按住右邊的小點點上下拖可以換順序。
+    歌名太長：平常把多的切掉，滑鼠移上去就用跑馬燈慢慢捲給你看。"""
+
+    ROW, GAP, PAD = 46, 8, 10
+    GRIP = 26                                   # 右邊換順序的把手寬度
+
+    def __init__(self, master, player, width):
+        th = player.th
+        super().__init__(master, width=width, bg=rgbhex(th["bg"]), highlightthickness=0, bd=0, cursor="hand2")
+        self.p = player
+        self.th = th
+        self.W = width
+        self.songs, self.cur, self.sel = [], None, None
+        self.top_y = 0.0
+        self.vel = 0.0
+        self.press = None
+        self.moved = False
+        self.anim = None
+        self.imgs = {}
+        self.photos = {}                        # 歌名的 PhotoImage（切好的）
+        self.spin = 0
+        self.last = (0, 0.0)
+        self.hover = None                       # 滑鼠停在哪一首（跑馬燈）
+        self.mq = 0.0                           # 跑馬燈捲到哪
+        self.mq_job = None
+        self.mq_img = None
+        self.grab = None                        # 正在拖著換順序的那首
+        self.grab_y = 0
+        self.grab_off = 0
+        self.bind("<ButtonPress-1>", self.on_press)
+        self.bind("<B1-Motion>", self.on_drag)
+        self.bind("<ButtonRelease-1>", self.on_release)
+        self.bind("<Double-Button-1>", self.on_double)
+        self.bind("<MouseWheel>", self.on_wheel)
+        self.bind("<Motion>", self.on_motion)
+        self.bind("<Leave>", lambda e: self.set_hover(None))
+        self.bind("<Configure>", lambda e: (self.clamp(), self.draw()))
+        self.card_pil = {}
+        self.cards = {k: self.card(k) for k in ("normal", "sel", "cur", "grab")}
+        self.f_title = tkfont.Font(family=FONT, size=10, weight="bold")
+        self.f_sub = tkfont.Font(family=FONT, size=8)
+        self.widths = {}
+
+    def card(self, kind):
+        """卡片圖：圓角、底下一點陰影、上亮下暗的漸層，看起來有點浮起來；右邊是換順序的把手。"""
+        from PIL import ImageTk
+        th, S = self.th, 3
+        w, h = (self.W - 2 * self.PAD) * S, (self.ROW + 8) * S
+        im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        sh = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        ImageDraw.Draw(sh).rounded_rectangle((3 * S, 6 * S, w - 3 * S, self.ROW * S + 3 * S), radius=14 * S,
+                                             fill=th["shadow"] + ({"cur": 110, "grab": 150}.get(kind, 70),))
+        im.alpha_composite(sh.filter(ImageFilter.GaussianBlur((5 if kind == "grab" else 3) * S)))
+        top_c, bot_c, edge = {"normal": ((255, 255, 255), th["bg"], th["line"]),
+                              "sel": (th["sel_top"], th["sel_bot"], th["sel_edge"]),
+                              "grab": (th["sel_top"], th["sel_bot"], th["acc"]),
+                              "cur": (th["acc_l"], th["acc"], th["acc_d"])}[kind]
+        body = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        bd = ImageDraw.Draw(body)
+        for y in range(0, self.ROW * S):
+            bd.line([(0, y), (w, y)], fill=mix(top_c, bot_c, y / (self.ROW * S)) + (255,))
+        m = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(m).rounded_rectangle((2 * S, 0, w - 2 * S, self.ROW * S), radius=14 * S, fill=255)
+        im.paste(body, (0, 0), m)
+        d = ImageDraw.Draw(im)
+        d.rounded_rectangle((2 * S, 0, w - 2 * S, self.ROW * S), radius=14 * S, outline=edge + (255,),
+                            width=2 * S if kind == "grab" else S)
+        hi = Image.new("RGBA", (w, h), (0, 0, 0, 0))                                # 上緣的亮光（疊上去，不是挖洞）
+        ImageDraw.Draw(hi).rounded_rectangle((8 * S, 2 * S, w - 8 * S, 6 * S), radius=2 * S, fill=(255, 255, 255, 90))
+        im.alpha_composite(hi)
+        gc = (255, 255, 255, 210) if kind == "cur" else th["acc_l"] + (230,)          # 換順序的把手：兩排小點
+        gx = w - (self.GRIP / 2 + 4) * S
+        for col in (-1, 1):
+            for row in (-1, 0, 1):
+                x, y = gx + col * 3 * S, self.ROW * S / 2 + row * 5 * S
+                d.ellipse((x - 1.6 * S, y - 1.6 * S, x + 1.6 * S, y + 1.6 * S), fill=gc)
+        im = im.resize((w // S, h // S), Image.LANCZOS)
+        self.card_pil[kind] = im
+        return ImageTk.PhotoImage(im)
+
+    def mini_disc(self, angle):
+        from PIL import ImageTk
+        key = int(angle) % 360 // 15
+        if key not in self.imgs:
+            S, r = 3, 13
+            im = Image.new("RGBA", (r * 2 * S, r * 2 * S), (0, 0, 0, 0))
+            d = ImageDraw.Draw(im)
+            d.ellipse((0, 0, r * 2 * S - 1, r * 2 * S - 1), fill=(40, 34, 40, 255))
+            for k in (.75, .55):
+                d.ellipse((r * S * (1 - k), r * S * (1 - k), r * S * (1 + k), r * S * (1 + k)), outline=(70, 64, 72, 255), width=S)
+            d.ellipse((r * S * .62, r * S * .62, r * S * 1.38, r * S * 1.38), fill=self.th["acc_ll"] + (255,))
+            hi = Image.new("RGBA", im.size, (0, 0, 0, 0))
+            ImageDraw.Draw(hi).arc((S * 3, S * 3, r * 2 * S - S * 3, r * 2 * S - S * 3), 200, 240, fill=(255, 255, 255, 120), width=2 * S)
+            im.alpha_composite(hi)
+            im = im.rotate(-key * 15, resample=Image.BICUBIC).resize((r * 2, r * 2), Image.LANCZOS)
+            self.imgs[key] = ImageTk.PhotoImage(im)
+        return self.imgs[key]
+
+    # ---- 歌名 ----
+    # 歌名用畫布的文字（不用每次重畫圖片，跑馬燈只要挪位置，很省）；放不下的部分用「跟卡片一模一樣的圖」蓋住，
+    # 蓋的那張邊緣是漸層，看起來就像文字淡出去。
+    FADE = 14
+
+    def text_x(self):
+        return self.PAD + 44
+
+    def avail(self):
+        return self.W - self.PAD - self.GRIP - 8 - self.text_x()
+
+    def tw(self, s):
+        w = self.widths.get(s)
+        if w is None:
+            if len(self.widths) > 500:
+                self.widths.clear()
+            w = self.widths[s] = self.f_title.measure(s)
+        return w
+
+    def mask(self, kind, side):
+        """蓋住超出範圍文字的遮罩：right＝歌名右邊到畫布右緣；left＝卡片左邊到歌名開頭（跑馬燈時用）。"""
+        from PIL import ImageTk
+        key = ("mask", kind, side)
+        if key not in self.imgs:
+            card = self.card_pil[kind]
+            cw, ch = card.size
+            F = self.FADE
+            if side == "right":
+                xr = self.text_x() - self.PAD + self.avail() - F
+                im = Image.new("RGBA", (self.W - self.PAD - xr, ch), self.th["bg"] + (255,))
+                im.alpha_composite(card.crop((xr, 0, cw, ch)))
+                a = Image.new("L", im.size, 255)
+                a.paste(ramp(F, ch, True), (0, 0))
+            else:
+                xl = self.text_x() - self.PAD + F
+                im = Image.new("RGBA", (self.PAD + xl, ch), self.th["bg"] + (255,))
+                im.alpha_composite(card.crop((0, 0, xl, ch)), (self.PAD, 0))
+                a = Image.new("L", im.size, 255)
+                a.paste(ramp(F, ch, False), (im.width - F, 0))
+            im.putalpha(ImageChops.multiply(im.getchannel("A"), a))
+            self.imgs[key] = ImageTk.PhotoImage(im)
+        return self.imgs[key]
+
+    # ---- 位置（歌比畫面多時是一圈的）----
+    def set(self, songs, cur, sel=None):
+        self.songs, self.cur = songs, cur
+        self.sel = sel if sel is not None and sel < len(songs) else None
+        self.clamp()
+        self.draw()
+
+    def step(self):
+        return self.ROW + self.GAP
+
+    def wrap(self):
+        return len(self.songs) * self.step() > self.view_h()
+
+    def content_h(self):
+        return self.PAD * 2 + len(self.songs) * self.step()
+
+    def view_h(self):
+        return max(1, self.winfo_height())
+
+    def clamp(self):
+        if self.songs and self.wrap():
+            self.top_y %= len(self.songs) * self.step()
+        else:
+            self.top_y = max(0.0, min(self.top_y, max(0.0, self.content_h() - self.view_h())))
+
+    def rows(self):
+        """看得到的每一列：(第幾首, 畫面上的 y)。"""
+        n, st, H = len(self.songs), self.step(), self.view_h()
+        if not n:
+            return []
+        if self.wrap():
+            k0 = int(math.floor((self.top_y - self.PAD) / st))
+            return [(k % n, self.PAD + k * st - self.top_y) for k in range(k0, k0 + int(H // st) + 3)]
+        first = max(0, int((self.top_y - self.PAD) // st))
+        last = min(n, int((self.top_y + H) // st) + 2)
+        return [(i, self.PAD + i * st - self.top_y) for i in range(first, last)]
+
+    def see(self, i):
+        H = self.view_h()
+        for k, y in self.rows():
+            if k == i and 0 <= y and y + self.ROW <= H:
+                return self.draw()
+        y = self.PAD + i * self.step()
+        if self.wrap():
+            self.top_y = y - (H - self.ROW) / 2                  # 一圈的：直接把它放到中間
+        elif y < self.top_y:
+            self.top_y = y - self.GAP
+        else:
+            self.top_y = y + self.ROW + self.GAP - H
+        self.clamp()
+        self.draw()
+
+    def index_at(self, y):
+        for i, yy in self.rows():
+            if yy <= y <= yy + self.ROW:
+                return i
+        return None
+
+    def on_grip(self, x):
+        return x >= self.W - self.PAD - self.GRIP - 4
+
+    def draw(self):
+        """只畫看得到的那幾張卡片（歌很多也不會卡）。"""
+        self.delete("all")
+        H = self.view_h()
+        if not self.songs:
+            self.create_text(self.W / 2, 50, text="♪ 目前沒有任何音檔", font=(FONT, 11, "bold"), fill=rgbhex(self.th["muted"]))
+            return
+        self.items = {}                                                 # 每一首的 (標題圖, 小唱片) 在畫布上的編號
+        lifted = None
+        for i, y in self.rows():
+            if i == self.grab:
+                lifted = i
+                continue
+            self.draw_row(i, y)
+        if lifted is not None:                                          # 拖著的那張浮在最上面
+            self.draw_row(lifted, self.grab_y, lift=True)
+        for yy, flip in ((0, False), (H - 18, True)):                   # 上下邊緣淡出，看起來像舞台
+            self.create_image(0, yy, image=self.fade(flip), anchor="nw")
+
+    def draw_row(self, i, y, lift=False):
+        th = self.th
+        kind = "grab" if lift else "cur" if i == self.cur else "sel" if i == self.sel else "normal"
+        dx = 4 if lift else 0
+        self.create_image(self.PAD + dx, y, image=self.cards[kind], anchor="nw")
+        title, _, sub = self.songs[i][0].partition("　（")
+        fg = "#ffffff" if kind == "cur" else rgbhex(th["text"])
+        x0 = self.text_x() + dx
+        ty = y + self.ROW / 2 - (8 if sub else 0)
+        w = self.tw(title)
+        over = w > self.avail()
+        rolling = over and i == self.hover and self.grab is None and not self.press and self.mq > 0
+        off = self.mq if rolling else 0
+        texts = [self.create_text(x0 - off, ty, text=title, font=self.f_title, fill=fg, anchor="w")]
+        if over:                                                        # 跑馬燈的第二份（接在後面繞圈）
+            texts.append(self.create_text(x0 - off + w + 40, ty, text=title, font=self.f_title, fill=fg, anchor="w"))
+        if sub:
+            sc = rgbhex(th["acc_ll"] if kind == "cur" else th["muted"])
+            self.create_text(x0, y + self.ROW / 2 + 10, text="📁 " + sub.rstrip("）"), font=self.f_sub, fill=sc, anchor="w")
+        if over or (sub and self.f_sub.measure("📁 " + sub) > self.avail()):
+            self.create_image(self.PAD + dx + self.text_x() - self.PAD + self.avail() - self.FADE, y,
+                              image=self.mask(kind, "right"), anchor="nw")
+        if rolling:
+            self.create_image(dx, y, image=self.mask(kind, "left"), anchor="nw")
+        disc = None
+        if i == self.cur:
+            disc = self.create_image(self.PAD + 24 + dx, y + self.ROW / 2, image=self.mini_disc(self.spin))
+        else:
+            self.create_text(self.PAD + 24 + dx, y + self.ROW / 2, text=f"{i + 1}", font=(FONT, 9, "bold"),
+                             fill=rgbhex(th["acc_l"] if kind == "normal" else th["acc"]))
+        self.items.setdefault(i, []).append((texts, disc, x0, w, rolling))
+
+    def fade(self, flip):
+        from PIL import ImageTk
+        key = ("fade", flip)
+        if key not in self.imgs:
+            c = self.th["bg"]
+            im = Image.new("RGBA", (self.W, 18), (0, 0, 0, 0))
+            d = ImageDraw.Draw(im)
+            for y in range(18):
+                a = int(255 * (1 - y / 18) ** 1.6)
+                d.line([(0, 17 - y if flip else y), (self.W, 17 - y if flip else y)], fill=c + (a,))
+            self.imgs[key] = ImageTk.PhotoImage(im)
+        return self.imgs[key]
+
+    # ---- 跑馬燈 ----
+    def on_motion(self, e):
+        if self.press:
+            return
+        self.config(cursor="sb_v_double_arrow" if self.on_grip(e.x) else "hand2")
+        self.set_hover(self.index_at(e.y))
+
+    def set_hover(self, i):
+        if i == self.hover:
+            return
+        self.hover = i
+        self.mq = -25.0                                   # 先停一下再開始捲
+        if self.mq_job:
+            self.after_cancel(self.mq_job)
+            self.mq_job = None
+        self.draw()
+        if i is not None:
+            self.mq_job = self.after(40, self.marquee)
+
+    def marquee(self):
+        self.mq_job = None
+        if self.hover is None or self.hover >= len(self.songs):
+            return
+        w = self.tw(self.songs[self.hover][0].partition("　（")[0])
+        if w <= self.avail():                             # 放得下：不用捲
+            return
+        was = self.mq
+        self.mq += 2.0
+        if self.mq >= w + 40:                             # 繞完一圈：回到開頭停一下再繼續
+            self.mq = -40.0
+        if not self.anim and not self.press:
+            rows = getattr(self, "items", {}).get(self.hover, [])
+            if (was <= 0) != (self.mq <= 0) or not all(r[4] for r in rows):
+                self.draw()                               # 開始捲／停下來：重畫一次（加上、拿掉左邊的遮罩）
+            else:
+                for texts, _, x0, w_, _r in rows:         # 捲動中：只挪文字的位置
+                    for k, t in enumerate(texts):
+                        self.coords(t, x0 - self.mq + k * (w_ + 40), self.coords(t)[1])
+        self.mq_job = self.after(40, self.marquee)
+
+    # ---- 按住拖、滾輪 ----
+    def on_wheel(self, e):
+        if self.anim:
+            self.after_cancel(self.anim)
+            self.anim = None
+        self.top_y -= e.delta / 120 * self.step() * .9
+        self.clamp()
+        self.draw()
+
+    def on_press(self, e):
+        if self.anim:
+            self.after_cancel(self.anim)
+            self.anim = None
+        self.press = (e.y, self.top_y)
+        self.last = (e.y, time.time())
+        self.vel = 0.0
+        self.moved = False
+        i = self.index_at(e.y)
+        if i is not None and self.on_grip(e.x) and len(self.songs) > 1:         # 按在把手上：換順序
+            self.grab = i
+            self.grab_off = e.y - dict(self.rows()).get(i, e.y)
+            self.grab_y = e.y - self.grab_off
+            self.draw()
+
+    def on_drag(self, e):
+        if not self.press:
+            return
+        if self.grab is not None:
+            return self.reorder_drag(e)
+        y0, t0 = self.press
+        if abs(e.y - y0) > 4:
+            self.moved = True
+        self.top_y = t0 - (e.y - y0)
+        self.clamp()
+        now = time.time()
+        ly, lt = self.last
+        if now > lt:
+            self.vel = self.vel * .4 + (-(e.y - ly) / max(.008, now - lt)) * .6     # 每秒幾 px
+        self.last = (e.y, now)
+        self.draw()
+
+    def reorder_drag(self, e):
+        """拖著把手：卡片跟著滑鼠走，經過別首就跟它換位置；拖到上下邊緣會自己捲。"""
+        H = self.view_h()
+        self.grab_y = e.y - self.grab_off
+        if e.y < 24:
+            self.top_y -= 6
+        elif e.y > H - 24:
+            self.top_y += 6
+        self.clamp()
+        mid = self.grab_y + self.ROW / 2
+        for i, y in self.rows():
+            if i != self.grab and y <= mid <= y + self.ROW:
+                self.grab = self.p.move_song(self.grab, i)
+                break
+        self.draw()
+
+    def on_release(self, e):
+        if not self.press:
+            return
+        moved = self.moved
+        self.press = None
+        if self.grab is not None:
+            self.grab = None
+            self.p.save_order()
+            self.draw()
+            return
+        if not moved:
+            i = self.index_at(e.y)
+            if i is not None:
+                self.sel = i
+            self.draw()
+            return
+        if time.time() - self.last[1] > .08:      # 停住才放手：不滑
+            self.vel = 0
+        self.glide()
+
+    def glide(self):
+        """放手以後順順地再滑一段，慢慢停下來。"""
+        self.anim = None
+        if abs(self.vel) < 20:
+            self.draw()
+            return
+        before = self.top_y
+        self.top_y += self.vel * .016
+        self.clamp()
+        self.vel *= .92
+        if self.top_y == before:
+            self.vel = 0
+        self.draw()
+        self.anim = self.after(16, self.glide)
+
+    def on_double(self, e):
+        if self.on_grip(e.x):
+            return
+        i = self.index_at(e.y)
+        if i is not None:
+            self.sel = i
+            self.p.play_index(i)
+
+    def tick_spin(self):
+        """正在播的那首旁邊的小唱片轉一格。"""
+        if self.cur is None or self.press or self.anim:
+            return
+        self.spin = (self.spin - 15) % 360
+        for _t, disc, *_r in getattr(self, "items", {}).get(self.cur, []):       # 只換小唱片那張圖
+            if disc:
+                self.itemconfig(disc, image=self.mini_disc(self.spin))
+
+
+class MusicPlayer:
+    """音樂播放器「誰來播音樂」：請一隻小可愛當 DJ，播放器就換成她的顏色、唱片中間貼她的頭。
+    播你自己資料夾裡的音樂（含子資料夾），歌名＝檔名。一般視窗：可以最小化到工作列（音樂繼續播），關掉就停。
+    換 DJ 時音樂不會斷，只換外觀。"""
+
+    W, H = 400, 464                        # 上半部畫布
+    REC = (200, 150, 104)                  # 唱片：中心 x、y、半徑
+    TITLE_Y, SUB_Y = 290, 316              # 歌名（一行，太長就跑馬燈）、下面那行小字
+    BAR = (40, 342, 360)                   # 時間條：左、y、右
+    VOL = (182, 364, 262)                  # 音量條：放在時間那一行的中間（左邊是喇叭）
+
+    def __init__(self, world, cid):
+        self.w = world
+        st = world.settings
+        self.folder = st.get("music_dir") or str(MUSIC_DIR)
+        if self.folder == str(MUSIC_DIR):
+            try:
+                MUSIC_DIR.mkdir(exist_ok=True)
+            except OSError:
+                pass
+        self.shuffle = st.get("music_shuffle", False)
+        self.repeat_one = st.get("music_repeat_one", False)
+        self.volume = st.get("music_volume", 70)
+        self.songs = []                 # [(顯示名稱, 完整路徑)]
+        self.cur = None
+        self.history = []
+        self.opened = False
+        self.mf = None                  # MediaPlayer
+        self.wait = 0                   # 剛打開：等它讀到長度
+        self.playing = False
+        self.length = 0
+        self.pos_ms = 0
+        self.drag = None                # 正在拖："seek" / "vol"
+        self.fails = 0
+        self.angle = 0.0
+        self.arm = 0.0                  # 唱臂：0＝收起來，1＝放在唱片上
+        self.frame = 0
+        self.msg = None
+        self.imgs = {}
+        top = self.top = tk.Toplevel(world.root)
+        self.compact = world.settings.get("music_compact", False)
+        self.full_h = 790
+        top.geometry(f"{self.W + 2}x{self.H + 2 if self.compact else self.full_h}")   # +2：外面那圈 1px 的細邊
+        top.minsize(self.W, self.H if self.compact else 600)
+        top.resizable(False, True)
+        try:
+            top.iconbitmap(sys.executable if getattr(sys, "frozen", False) else str(BASE / "dev" / "icon.ico"))
+        except Exception:
+            pass
+        top.protocol("WM_DELETE_WINDOW", self.close)
+        self.set_dj(cid, first=True)
+        top.configure(highlightthickness=1)
+        top.attributes("-topmost", True)                    # 不會被其他視窗蓋住（但會排在小可愛後面，見 World.equip_order）
+        self.borderless()
+        top.bind("<Map>", self.on_map)
+        self.job = top.after(50, self.tick)
+
+    def borderless(self):
+        """平常：完全沒有 Windows 的標題列和邊框（寬度剛好，不會被撐開）。叫回來時照縮小前的位置、大小放回去。"""
+        try:
+            if not self.top.overrideredirect():
+                self.top.withdraw()
+                self.top.overrideredirect(True)
+                if getattr(self, "saved_geo", None):
+                    self.top.geometry(self.saved_geo)
+                self.top.deiconify()
+        except tk.TclError:
+            pass
+
+    def minimize(self):
+        """縮到工作列：暫時變回一般視窗才縮得下去；從工作列叫回來時（<Map>）再變回沒有邊框。"""
+        t = self.top
+        self.saved_geo = f"{t.winfo_width()}x{t.winfo_height()}+{t.winfo_x()}+{t.winfo_y()}"
+        self.minimized = True
+        t.withdraw()
+        t.overrideredirect(False)
+        t.update_idletasks()
+        t.iconify()
+
+    def on_map(self, e):
+        if getattr(self, "minimized", False) and e.widget is self.top:
+            self.minimized = False
+            self.top.after(30, self.borderless)
+
+    def hwnd(self):
+        return user32.GetParent(self.top.winfo_id()) or self.top.winfo_id()
+
+    def move_start(self, e):
+        r = wintypes.RECT()
+        user32.GetWindowRect(self.hwnd(), ctypes.byref(r))
+        self.moving = (e.x_root - r.left, e.y_root - r.top)
+
+    def move_drag(self, e):
+        """直接叫 Windows 搬視窗（用 Tk 搬會把已經拿掉的邊框寬度又算回去）。"""
+        if getattr(self, "moving", None):
+            dx, dy = self.moving
+            user32.SetWindowPos(self.hwnd(), None, e.x_root - dx, e.y_root - dy, 0, 0, 0x0001 | 0x0004 | 0x0010)
+
+    # ---------------------------------------------------------------- 換 DJ：整個外觀照她的顏色重畫
+    def set_dj(self, cid, first=False):
+        ch = self.w.chars.get(cid) or self.w.chars.get("claude") or next(iter(self.w.chars.values()))
+        self.cid = ch.id
+        self.w.settings["music_dj"] = self.cid
+        self.th = th = music_theme(ch.cfg.get("accent") or "#e8763a")
+        self.BG = rgbhex(th["bg"])
+        self.ACC, self.MUTED, self.TEXT_ = rgbhex(th["acc"]), rgbhex(th["muted"]), rgbhex(th["text"])
+        sel = getattr(getattr(self, "lst", None), "sel", None)
+        for c in self.top.winfo_children():
+            c.destroy()
+        self.imgs = {}
+        top = self.top
+        top.configure(bg=self.BG, highlightbackground=rgbhex(th["sel_edge"]), highlightcolor=rgbhex(th["sel_edge"]))
+        self.cv = tk.Canvas(top, width=self.W, height=self.H, bg=self.BG, highlightthickness=0, bd=0)
+        self.cv.pack(fill="x")
+        self.build_canvas()
+        # 資料夾（固定在最下面，歌單只用剩下的空間）
+        ff = self.foot = tk.Frame(top, bg=self.BG)
+        fb = dict(bg=rgbhex(th["tint"]), fg=self.TEXT_, activebackground=rgbhex(th["tint2"]), relief="flat", bd=0,
+                  cursor="hand2", font=(FONT, 9), padx=8, pady=3, takefocus=0, highlightthickness=0)
+        tk.Button(ff, text="重新整理", command=self.scan, **fb).pack(side="right", padx=(6, 0))
+        tk.Button(ff, text="換資料夾", command=self.pick_folder, **fb).pack(side="right", padx=(6, 0))
+        tk.Button(ff, text="📂 打開資料夾", command=self.open_folder,
+                  **dict(fb, bg=self.ACC, fg="white", activebackground=rgbhex(th["acc_l"]))).pack(side="right")
+        self.dir_lbl = tk.Label(ff, text="", bg=self.BG, fg=self.MUTED, font=(FONT, 9), anchor="w", width=1)
+        self.dir_lbl.pack(side="left", fill="x", expand=True)
+        # 歌單
+        head = self.list_head = tk.Frame(top, bg=self.BG)
+        tk.Label(head, text="🎶 歌單", bg=self.BG, fg=self.ACC, font=(FONT, 10, "bold")).pack(side="left")
+        tk.Label(head, text="拖曳或滾輪捲動・點兩下播放・拖右邊小點點換順序", bg=self.BG, fg=self.MUTED, font=(FONT, 8)).pack(side="right")
+        self.lst = SongList(top, self, self.W - 12)
+        self.lst.sel = sel
+        self.layout()
+        self.scan()
+        self.redraw_all()
+        top.after(80, lambda: self.cur is not None and self.lst.winfo_exists() and self.lst.see(self.cur))   # 畫好之後捲到正在播的那首
+        name = self.w.disp_name(self.cid)
+        song = self.title()
+        top.title(f"🎵 {song} - {name} DJ" if song else f"🎧 {name}來播音樂")
+        if not first:
+            self.w.music_dj_changed(self.cid)
+
+    # ---------------------------------------------------------------- 畫面
+    def tkimg(self, key, im):
+        from PIL import ImageTk
+        self.imgs[key] = ImageTk.PhotoImage(im)
+        return self.imgs[key]
+
+    def build_canvas(self):
+        cv, W, H, th = self.cv, self.W, self.H, self.th
+        bg = Image.new("RGBA", (W, H), th["bg"] + (255,))
+        d = ImageDraw.Draw(bg)
+        for y in range(260):                                        # 上面淡淡的漸層＋小點點、小音符
+            d.line([(0, y), (W, y)], fill=mix(th["bg_top"], th["bg"], y / 260) + (255,))
+        rng = random.Random(3)
+        for _ in range(26):
+            x, y, r = rng.uniform(8, W - 8), rng.uniform(8, 250), rng.uniform(1.5, 3.2)
+            d.ellipse((x - r, y - r, x + r, y + r), fill=(255, 255, 255, 170))
+        for x, y, s, ch in ((40, 60, 20, "♪"), (352, 236, 18, "♫"), (60, 228, 14, "♪"), (330, 96, 13, "♩")):
+            d.text((x, y), ch, font=TEXT.font(1, s), fill=th["note"] + (200,), anchor="mm")
+        TEXT.draw(d, (14, 12), f"🎧 DJ {self.w.disp_name(self.cid)}", 13, th["acc_d"] + (230,))
+        cv.create_image(0, 0, image=self.tkimg("bg", bg), anchor="nw")
+        sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))                # 唱片底下的影子
+        cx, cy, R = self.REC
+        ImageDraw.Draw(sh).ellipse((cx - R + 6, cy - R + 12, cx + R + 6, cy + R + 12), fill=th["shadow"] + (70,))
+        cv.create_image(0, 0, image=self.tkimg("shadow", sh.filter(ImageFilter.GaussianBlur(9))), anchor="nw")
+        disc, gloss = self.make_disc()
+        cv.create_image(cx, cy, image=self.tkimg("disc", disc))
+        self.rec_item = cv.create_image(cx, cy, image=self.label_frame())
+        cv.create_image(cx, cy, image=self.tkimg("gloss", gloss))
+        self.arm_item = cv.create_image(0, 0, anchor="nw")
+        self.f_big = tkfont.Font(family=FONT, size=14, weight="bold")
+        self.title_txt = None
+        self.tq = -30.0                                            # 大歌名的跑馬燈捲到哪
+        self.title_items = [cv.create_text(W / 2, self.TITLE_Y, text="", font=self.f_big, fill=self.TEXT_, anchor="w")
+                            for _ in range(2)]
+        F, side_w, hh = 16, 28, 34                                 # 兩邊蓋住超出去的字：底色＋漸層
+        for x, rising in ((0, False), (W - side_w - F, True)):
+            m = Image.new("RGBA", (side_w + F, hh), th["bg"] + (255,))
+            a = Image.new("L", m.size, 255)
+            a.paste(ramp(F, hh, rising), (side_w if not rising else 0, 0))
+            m.putalpha(a)
+            it = cv.create_image(x, self.TITLE_Y - hh / 2, image=self.tkimg(f"tmask{x}", m), anchor="nw")
+            self.title_items.append(it)
+        self.sub_item = cv.create_text(W / 2, self.SUB_Y, text="", font=(FONT, 9), fill=self.MUTED)
+        self.bar_item = cv.create_image(0, 0, anchor="nw")
+        self.cur_item = cv.create_text(self.BAR[0], self.VOL[1], text="00:00", font=(FONT, 9), fill=self.MUTED, anchor="w")
+        self.len_item = cv.create_text(self.BAR[2], self.VOL[1], text="00:00", font=(FONT, 9), fill=self.MUTED, anchor="e")
+        # 右上角自己的「縮小」「關掉」；上面空白的地方按住可以拖著移動視窗
+        for key, x, cmd in (("size", W - 78, self.toggle_compact), ("min", W - 50, self.minimize), ("close", W - 22, self.close)):
+            it = cv.create_image(x, 17, image=self.tkimg("win_" + key, self.win_btn(key)))
+            if key == "size":
+                self.size_btn = it
+            cv.tag_bind(it, "<Button-1>", lambda e, c=cmd: c())
+            cv.tag_bind(it, "<Enter>", lambda e: cv.config(cursor="hand2"))
+            cv.tag_bind(it, "<Leave>", lambda e: cv.config(cursor=""))
+        self.btns = {}
+        for key, x, r in (("shuffle", 62, 17), ("prev", 132, 23), ("play", 200, 32), ("next", 268, 23), ("repeat", 338, 17)):
+            self.btns[key] = (cv.create_image(x, 416, image=self.tkimg(key, self.button(key))), x, 416, r)
+        for key, (item, *_r) in self.btns.items():
+            cv.tag_bind(item, "<Button-1>", lambda e, k=key: self.press(k))
+            cv.tag_bind(item, "<Enter>", lambda e: cv.config(cursor="hand2"))
+            cv.tag_bind(item, "<Leave>", lambda e: cv.config(cursor=""))
+        self.spk_item = cv.create_image(self.VOL[0] - 20, self.VOL[1])          # 喇叭（自己畫，跟音量條同一個高度）
+        self.vol_item = cv.create_image(0, 0, anchor="nw")
+        cv.bind("<ButtonPress-1>", self.bar_press, add="+")
+        cv.bind("<B1-Motion>", self.bar_move)
+        cv.bind("<MouseWheel>", self.wheel_volume)
+        cv.bind("<ButtonRelease-1>", self.bar_release)
+
+    def layout(self):
+        """正常版：唱片＋歌單＋資料夾那排；小型版：只有唱片和控制（歌單、資料夾那排收起來）。"""
+        for wdg in (self.foot, self.list_head, self.lst):
+            wdg.pack_forget()
+        if not self.compact:
+            self.foot.pack(side="bottom", fill="x", padx=16, pady=(0, 12))
+            self.list_head.pack(fill="x", padx=18, pady=(0, 2))
+            self.lst.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+
+    def toggle_compact(self):
+        t = self.top
+        if not self.compact:
+            self.full_h = max(600, t.winfo_height())
+        self.compact = not self.compact
+        self.w.settings["music_compact"] = self.compact
+        self.layout()
+        t.minsize(self.W, self.H if self.compact else 600)
+        t.geometry(f"{self.W + 2}x{self.H + 2 if self.compact else self.full_h}")
+        self.cv.itemconfig(self.size_btn, image=self.tkimg("win_size", self.win_btn("size")))
+        if not self.compact and self.cur is not None:
+            t.after(80, lambda: self.lst.see(self.cur))
+
+    def win_btn(self, key):
+        """右上角的小圓鈕：切換小型／正常、－ 縮小、× 關掉。"""
+        th, S, r = self.th, 4, 10
+        D = (r * 2 + 4) * S
+        im = Image.new("RGBA", (D, D), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        c = D / 2
+        fill = th["acc"] + (255,) if key == "close" else (255, 255, 255, 230)
+        d.ellipse((c - r * S, c - r * S, c + r * S, c + r * S), fill=fill, outline=th["line"] + (255,), width=S)
+        ic = (255, 255, 255, 255) if key == "close" else th["acc_d"] + (255,)
+        u = r * S * .42
+        if key == "size":                                   # 小型：三條線（展開歌單）；正常：一個小方塊（收成小型）
+            if self.compact:
+                for k in (-1, 0, 1):
+                    d.line([(c - u, c + k * u * .7), (c + u, c + k * u * .7)], fill=ic, width=int(S * 1.8))
+            else:
+                d.rounded_rectangle((c - u, c - u * .55, c + u, c + u * .55), radius=S * 1.5, outline=ic, width=int(S * 1.8))
+        elif key == "min":
+            d.line([(c - u, c), (c + u, c)], fill=ic, width=int(S * 2.2))
+        else:
+            d.line([(c - u, c - u), (c + u, c + u)], fill=ic, width=int(S * 2.2))
+            d.line([(c - u, c + u), (c + u, c - u)], fill=ic, width=int(S * 2.2))
+        return im.resize((D // S, D // S), Image.LANCZOS)
+
+    def make_disc(self):
+        """黑膠唱片拆成三層：底（一圈一圈的紋路，轉了看起來都一樣，不用轉）、
+        中間貼的 DJ 頭像（只有這一小塊會轉）、最上面的反光（反光本來就不會跟著轉）。"""
+        cx, cy, R = self.REC
+        S = 2
+        D = R * 2 * S
+        base = Image.new("RGBA", (D, D), (0, 0, 0, 0))
+        d = ImageDraw.Draw(base)
+        d.ellipse((0, 0, D - 1, D - 1), fill=(34, 30, 36, 255))
+        for k in range(14):
+            rr = D / 2 * (.97 - k * .042)
+            c = 50 + (k % 2) * 8
+            d.ellipse((D / 2 - rr, D / 2 - rr, D / 2 + rr, D / 2 + rr), outline=(c, c - 2, c + 4, 255), width=S)
+        gloss = Image.new("RGBA", (D, D), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(gloss)
+        for a0, a1, al in ((200, 245, 40), (20, 65, 26)):
+            gd.arc((D * .06, D * .06, D * .94, D * .94), a0, a1, fill=(255, 255, 255, al), width=int(D * .05))
+        gloss = gloss.filter(ImageFilter.GaussianBlur(D * .01))
+        lr = int(D * .21)
+        ch = self.w.chars[self.cid]
+        src = Image.open(ch.poses["idle"][0]).convert("RGBA")
+        bb = src.getbbox()
+        side = int((bb[2] - bb[0]) * .62)
+        mx = (bb[0] + bb[2]) // 2
+        head = src.crop((mx - side // 2, bb[1], mx + side // 2, bb[1] + side)).resize((lr * 2, lr * 2), Image.LANCZOS)
+        face = Image.new("RGBA", (lr * 2, lr * 2), self.th["acc_ll"] + (255,))
+        face.alpha_composite(head)
+        mask = Image.new("L", (lr * 2, lr * 2), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, lr * 2 - 1, lr * 2 - 1), fill=255)
+        label = Image.new("RGBA", (lr * 2, lr * 2), (0, 0, 0, 0))
+        label.paste(face, (0, 0), mask)
+        ImageDraw.Draw(label).ellipse((0, 0, lr * 2 - 1, lr * 2 - 1), outline=self.th["acc"] + (255,), width=int(4 * S))
+        base.alpha_composite(label, (D // 2 - lr, D // 2 - lr))           # 底圖也先貼一份（轉的那層蓋在上面）
+        small = lambda im, n: im.resize((n, n), Image.LANCZOS)
+        self.disc_label = small(label, int(lr * 2 / S))
+        self.disc_frames = {}
+        return small(base, R * 2), small(gloss, R * 2)
+
+    def label_frame(self):
+        """中間頭像轉到現在的角度（每 4 度一張，轉過一圈以後就都存好了，不用再算）。"""
+        from PIL import ImageTk
+        k = int(round(self.angle / 4)) % 90
+        im = self.disc_frames.get(k)
+        if im is None:
+            im = self.disc_frames[k] = ImageTk.PhotoImage(self.disc_label.rotate(k * 4, resample=Image.BICUBIC))
+        return im
+
+    def draw_arm(self):
+        """唱臂：播放時放到唱片上，暫停時收回來。"""
+        th = self.th
+        cx, cy, R = self.REC
+        px, py = cx + R + 22, cy - R + 8
+        S = 2
+        im = Image.new("RGBA", (self.W * S, self.H * S), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        a = math.radians(18 + 22 * self.arm)
+        L1 = R * .95
+        ex, ey = px - math.sin(a) * L1, py + math.cos(a) * L1
+        d.line([(px * S, py * S), (ex * S, ey * S)], fill=(200, 196, 200, 255), width=6 * S)
+        d.line([(px * S, py * S), (ex * S, ey * S)], fill=(240, 238, 242, 255), width=3 * S)
+        hx, hy = ex - math.sin(a + .5) * 18, ey + math.cos(a + .5) * 18
+        d.line([(ex * S, ey * S), (hx * S, hy * S)], fill=th["acc"] + (255,), width=9 * S)
+        d.ellipse(((px - 14) * S, (py - 14) * S, (px + 14) * S, (py + 14) * S), fill=th["acc_l"] + (255,),
+                  outline=th["acc_d"] + (255,), width=2 * S)
+        d.ellipse(((px - 5) * S, (py - 5) * S, (px + 5) * S, (py + 5) * S), fill=(255, 255, 255, 255))
+        self.cv.itemconfig(self.arm_item, image=self.tkimg("arm", im.resize((self.W, self.H), Image.LANCZOS)))
+
+    def button(self, key):
+        """圓圓的按鈕：播放鍵是 DJ 顏色的大圓，其他是白色圓、彩色圖示；隨機／單曲重複開著時變彩色。"""
+        th = self.th
+        r = {"play": 32, "prev": 23, "next": 23, "shuffle": 17, "repeat": 17}[key]
+        on = key == "play" or (key == "shuffle" and self.shuffle) or (key == "repeat" and self.repeat_one)
+        S = 4
+        D = (r * 2 + 8) * S
+        im = Image.new("RGBA", (D, D), (0, 0, 0, 0))
+        sh = Image.new("RGBA", (D, D), (0, 0, 0, 0))
+        ImageDraw.Draw(sh).ellipse((4 * S, 6 * S, D - 4 * S, D - 2 * S), fill=th["shadow"] + (80,))
+        im.alpha_composite(sh.filter(ImageFilter.GaussianBlur(3 * S)))
+        d = ImageDraw.Draw(im)
+        c = D / 2
+        R = r * S
+        if on:
+            d.ellipse((c - R, c - R - S, c + R, c + R - S), fill=th["acc"] + (255,))
+            hi = Image.new("RGBA", im.size, (0, 0, 0, 0))                        # 按鈕上的亮面（疊上去）
+            ImageDraw.Draw(hi).ellipse((c - R * .8, c - R * .95, c + R * .5, c - R * .2), fill=(255, 255, 255, 70))
+            im.alpha_composite(hi)
+            d = ImageDraw.Draw(im)
+        else:
+            d.ellipse((c - R, c - R - S, c + R, c + R - S), fill=(255, 255, 255, 255), outline=th["line"] + (255,), width=S)
+        ic = (255, 255, 255, 255) if on else th["acc"] + (255,)
+        u = R * .36
+        cy = c - S
+        if key == "play" and not self.playing:
+            d.polygon([(c - u * .7, cy - u), (c - u * .7, cy + u), (c + u * 1.05, cy)], fill=ic)
+        elif key == "play":
+            for sx in (-1, 1):
+                d.rounded_rectangle((c + sx * u * .45 - u * .22, cy - u, c + sx * u * .45 + u * .22, cy + u), radius=u * .15, fill=ic)
+        elif key in ("prev", "next"):
+            sg = 1 if key == "next" else -1
+            d.polygon([(c - sg * u * .9, cy - u * .9), (c - sg * u * .9, cy + u * .9), (c + sg * u * .4, cy)], fill=ic)
+            d.rounded_rectangle((c + sg * u * .5 - u * .16, cy - u * .9, c + sg * u * .5 + u * .16, cy + u * .9), radius=u * .1, fill=ic)
+        elif key == "shuffle":
+            w_ = max(2, int(S * 2.2))
+            d.line([(c - u, cy - u * .6), (c - u * .2, cy - u * .6), (c + u * .3, cy + u * .6), (c + u * .9, cy + u * .6)], fill=ic, width=w_, joint="curve")
+            d.line([(c - u, cy + u * .6), (c - u * .2, cy + u * .6), (c + u * .3, cy - u * .6), (c + u * .9, cy - u * .6)], fill=ic, width=w_, joint="curve")
+            for yy in (-u * .6, u * .6):
+                d.polygon([(c + u * 1.15, cy + yy), (c + u * .7, cy + yy - u * .35), (c + u * .7, cy + yy + u * .35)], fill=ic)
+        elif key == "repeat":                                     # 一個圓角的循環框＋箭頭，中間一個 1
+            w_ = max(2, int(S * 2.2))
+            bgc = th["acc"] + (255,) if on else (255, 255, 255, 255)
+            d.rounded_rectangle((c - u * 1.05, cy - u * .7, c + u * 1.05, cy + u * .7), radius=u * .55, outline=ic, width=w_)
+            d.rectangle((c - u * .05, cy - u * .7 - w_, c + u * .35, cy - u * .7 + w_), fill=bgc)
+            d.polygon([(c + u * .45, cy - u * .7), (c + u * .05, cy - u * 1.02), (c + u * .05, cy - u * .38)], fill=ic)
+            d.text((c, cy + S * .5), "1", font=TEXT.font(0, int(u * .95)), fill=ic, anchor="mm")
+        return im.resize((D // S, D // S), Image.LANCZOS)
+
+    def draw_bar(self, x0, y, x1, frac, knob=True, h=8):
+        th = self.th
+        S = 3
+        W, H = int((x1 - x0 + 24) * S), int(28 * S)
+        im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        a, b, cy = 12 * S, W - 12 * S, H / 2
+        d.rounded_rectangle((a, cy - h * S / 2, b, cy + h * S / 2), radius=h * S / 2, fill=th["line"] + (255,))
+        fx = a + (b - a) * max(0.0, min(1.0, frac))
+        if fx > a + 2:
+            fill = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+            fd = ImageDraw.Draw(fill)
+            for i in range(int(a), int(fx) + 1, S):
+                fd.line([(i, cy - h * S / 2), (i, cy + h * S / 2)], fill=mix(th["acc_l"], th["acc"], (i - a) / max(1, b - a)) + (255,), width=S + 1)
+            m = Image.new("L", (W, H), 0)
+            ImageDraw.Draw(m).rounded_rectangle((a, cy - h * S / 2, fx, cy + h * S / 2), radius=h * S / 2, fill=255)
+            im.paste(fill, (0, 0), m)
+        if knob:
+            kr = (h * .95 + 2) * S
+            d.ellipse((fx - kr, cy - kr, fx + kr, cy + kr), fill=(255, 255, 255, 255), outline=th["acc"] + (255,), width=int(2.5 * S))
+        return im.resize((W // S, H // S), Image.LANCZOS)
+
+    def redraw_bar(self):
+        x0, y, x1 = self.BAR
+        frac = self.pos_ms / self.length if self.length else 0
+        self.cv.itemconfig(self.bar_item, image=self.tkimg("bar", self.draw_bar(x0, y, x1, frac)))
+        self.cv.coords(self.bar_item, x0 - 12, y - 14)
+        self.cv.itemconfig(self.cur_item, text=mmss(self.pos_ms))
+        self.cv.itemconfig(self.len_item, text=mmss(self.length))
+
+    def redraw_vol(self):
+        x0, y, x1 = self.VOL
+        self.cv.itemconfig(self.vol_item, image=self.tkimg("vol", self.draw_bar(x0, y, x1, self.volume / 100, h=5)))
+        self.cv.coords(self.vol_item, x0 - 12, y - 14)
+        self.cv.itemconfig(self.spk_item, image=self.tkimg("spk", self.speaker()))
+
+    def speaker(self):
+        """小喇叭：音量越大聲波越多（0 是一個小叉叉）。"""
+        S, Wd, Hd = 4, 22, 18
+        im = Image.new("RGBA", (Wd * S, Hd * S), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        c = self.th["acc"] + (255,)
+        cy = Hd * S / 2
+        d.rounded_rectangle((1 * S, cy - 3 * S, 5 * S, cy + 3 * S), radius=S, fill=c)
+        d.polygon([(4 * S, cy - 3 * S), (10 * S, cy - 7 * S), (10 * S, cy + 7 * S), (4 * S, cy + 3 * S)], fill=c)
+        if self.volume <= 0:
+            d.line([(13 * S, cy - 3 * S), (19 * S, cy + 3 * S)], fill=c, width=int(1.8 * S))
+            d.line([(13 * S, cy + 3 * S), (19 * S, cy - 3 * S)], fill=c, width=int(1.8 * S))
+        else:
+            for k, r in enumerate((4, 7.5)):
+                if k == 0 or self.volume > 50:
+                    d.arc((10 * S - r * S, cy - r * S, 10 * S + r * S, cy + r * S), -50, 50, fill=c, width=int(1.8 * S))
+        return im.resize((Wd, Hd), Image.LANCZOS)
+
+    def redraw_buttons(self):
+        for key, (item, *_r) in self.btns.items():
+            self.cv.itemconfig(item, image=self.tkimg(key, self.button(key)))
+
+    def redraw_text(self):
+        if self.cur is not None and self.cur < len(self.songs):
+            name = self.songs[self.cur][0].split("　（")[0]
+            mode = "單曲重複" if self.repeat_one else "隨機播放" if self.shuffle else "照順序播"
+            sub = f"第 {self.cur + 1} / {len(self.songs)} 首 ・ {mode}"
+        else:
+            name = "選一首歌來播吧 ♪" if self.songs else "目前沒有任何音檔"
+            sub = f"共 {len(self.songs)} 首" if self.songs else ""
+        if self.msg:
+            sub = self.msg
+        if name != self.title_txt:
+            self.title_txt = name
+            self.tq = -30.0
+        self.draw_title()
+        self.cv.itemconfig(self.sub_item, text=sub)
+
+    def draw_title(self):
+        """大歌名：一行；放不下就跑馬燈慢慢往左捲（剛換歌時先停一下）。只挪文字位置，不重畫。"""
+        cv, W = self.cv, self.W
+        t1, t2, m1, m2 = self.title_items
+        txt = self.title_txt or ""
+        w = self.title_w = self.f_big.measure(txt)
+        for t in (t1, t2):
+            cv.itemconfig(t, text=txt)
+        if w <= W - 56:                                     # 放得下：置中，不用遮罩
+            cv.coords(t1, (W - w) / 2, self.TITLE_Y)
+            cv.itemconfig(t2, state="hidden")
+            for m in (m1, m2):
+                cv.itemconfig(m, state="hidden")
+            return
+        cv.itemconfig(t2, state="normal")
+        cv.itemconfig(m2, state="normal")
+        cv.itemconfig(m1, state="normal" if self.tq > 0 else "hidden")
+        self.move_title()
+
+    def move_title(self):
+        t1, t2 = self.title_items[:2]
+        x = 28 - max(0.0, self.tq)
+        self.cv.coords(t1, x, self.TITLE_Y)
+        self.cv.coords(t2, x + self.title_w + 40, self.TITLE_Y)
+
+    def title_overflows(self):
+        return getattr(self, "title_w", 0) > self.W - 56
+
+    def redraw_all(self):
+        self.draw_arm()
+        self.redraw_bar()
+        self.redraw_vol()
+        self.redraw_buttons()
+        self.redraw_text()
+
+    # ---------------------------------------------------------------- 滑鼠
+    def press(self, key):
+        {"play": self.toggle, "prev": self.prev, "next": self.next, "shuffle": self.toggle_shuffle,
+         "repeat": self.toggle_repeat}[key]()
+
+    def hit(self, e, which):
+        x0, y, x1 = self.BAR if which == "seek" else self.VOL
+        return x0 - 10 <= e.x <= x1 + 10 and abs(e.y - y) <= (11 if which == "seek" else 9)
+
+    def frac_at(self, e, which):
+        x0, y, x1 = self.BAR if which == "seek" else self.VOL
+        return max(0.0, min(1.0, (e.x - x0) / (x1 - x0)))
+
+    def bar_press(self, e):
+        if e.y < 34 and e.x < self.W - 94:                   # 上面空白的地方：按住拖著移動視窗
+            return self.move_start(e)
+        for which in ("seek", "vol"):
+            if self.hit(e, which):
+                self.drag = which
+                return self.bar_move(e)
+
+    def bar_move(self, e):
+        if getattr(self, "moving", None):
+            return self.move_drag(e)
+        if self.drag == "seek" and self.length:
+            self.pos_ms = self.frac_at(e, "seek") * self.length
+            self.redraw_bar()
+        elif self.drag == "vol":
+            self.set_volume(self.frac_at(e, "vol") * 100)
+            self.redraw_vol()
+
+    def wheel_volume(self, e):
+        """在播放器上半部滾滾輪：調音量（一格 5%）。"""
+        step = 5 if e.delta > 0 else -5
+        self.set_volume(max(0, min(100, round(self.volume / 5) * 5 + step)))
+        self.redraw_vol()
+
+    def bar_release(self, e):
+        self.moving = None
+        if self.drag == "seek":
+            self.seek(self.pos_ms)
+        self.drag = None
+
+    # ---------------------------------------------------------------- 歌單
+    def open_folder(self):
+        import os
+        try:
+            Path(self.folder).mkdir(parents=True, exist_ok=True)
+            os.startfile(self.folder)
+        except OSError:
+            pass
+
+    def pick_folder(self):
+        from tkinter import filedialog
+        d = filedialog.askdirectory(parent=self.top, title="選擇放音樂的資料夾", initialdir=self.folder or None)
+        if d:
+            self.folder = d
+            self.w.settings["music_dir"] = d
+            self.w.save()
+            self.scan()
+
+    def scan(self):
+        """把資料夾（含子資料夾）裡的音樂都列出來，照路徑排好。"""
+        cur_path = self.songs[self.cur][1] if self.cur is not None and self.cur < len(self.songs) else None
+        self.songs = []
+        base = Path(self.folder) if self.folder else None
+        if base and base.is_dir():
+            files = sorted((f for f in base.rglob("*") if f.is_file() and f.suffix.lower() in MUSIC_EXT),
+                           key=lambda f: str(f.relative_to(base)).lower())
+            saved = self.w.settings.get("music_order", {}).get(str(base))
+            if saved:                                       # 你排過的順序；新加的歌排在最後面
+                rank = {r: k for k, r in enumerate(saved)}
+                files.sort(key=lambda f: rank.get(str(f.relative_to(base)), len(rank)))
+            for f in files:
+                sub = f.parent.relative_to(base)
+                self.songs.append((f.stem + (f"　（{sub}）" if str(sub) != "." else ""), str(f)))
+        self.cur = next((i for i, (_, f) in enumerate(self.songs) if f == cur_path), None)
+        self.history = []
+        self.mark_current()
+        name = Path(self.folder).name if self.folder else ""
+        self.dir_lbl.config(text=f"📁 {name}（{len(self.songs)} 首）" if self.folder else "📁 還沒選資料夾")
+        if hasattr(self, "title_item"):
+            self.redraw_text()
+
+    def move_song(self, a, b):
+        """歌單裡第 a 首搬到第 b 個位置；正在播的、選起來的那首跟著走。回傳搬過去以後的位置。"""
+        if a == b or not (0 <= a < len(self.songs) and 0 <= b < len(self.songs)):
+            return a
+        cur = self.songs[self.cur][1] if self.cur is not None else None
+        sel = self.songs[self.lst.sel][1] if self.lst.sel is not None and self.lst.sel < len(self.songs) else None
+        self.songs.insert(b, self.songs.pop(a))
+        paths = [f for _, f in self.songs]
+        self.cur = paths.index(cur) if cur in paths else None
+        self.lst.cur = self.cur
+        self.lst.sel = paths.index(sel) if sel in paths else None
+        self.history = []
+        self.redraw_text()
+        return b
+
+    def save_order(self):
+        if not self.folder:
+            return
+        base = Path(self.folder)
+        order = self.w.settings.setdefault("music_order", {})
+        try:
+            order[str(base)] = [str(Path(f).relative_to(base)) for _, f in self.songs]
+        except ValueError:
+            return
+        self.w.save()
+
+    def mark_current(self):
+        self.lst.set(self.songs, self.cur, self.lst.sel)
+        if self.cur is not None:
+            self.lst.see(self.cur)
+
+    # ---------------------------------------------------------------- 播放
+    def play_index(self, i, record=True):
+        if not self.songs:
+            return
+        i %= len(self.songs)
+        self.stop_file()
+        name, path = self.songs[i]
+        if record and self.cur is not None and self.cur != i:
+            self.history = (self.history + [self.cur])[-50:]
+        self.cur = i
+        self.msg = None
+        try:
+            self.mf = MediaPlayer(path)
+            ok = True
+        except OSError:
+            self.mf, ok = None, False
+        self.length = 0
+        self.wait = 0
+        if not ok:
+            return self.play_failed(name)
+        self.fails = 0
+        self.opened = True
+        self.pos_ms = 0
+        self.set_volume(self.volume)
+        title = name.split("　（")[0]
+        self.top.title(f"🎵 {title} - {self.w.disp_name(self.cid)} DJ")
+        self.mark_current()
+        self.set_playing(True)
+        self.redraw_text()
+        self.redraw_bar()
+        self.w.music_song(title)
+
+    def play_failed(self, name):
+        """播不了（格式不支援、檔案壞了）：跳下一首；全部都播不了就停下來。"""
+        if True:
+            self.stop_file()
+            self.fails += 1
+            self.mark_current()
+            if self.fails < len(self.songs):
+                self.msg = f"⚠ 「{name.split('　（')[0]}」播不了，跳下一首"
+                self.redraw_text()
+                self.top.after(900, lambda: self.next(auto=True))
+            else:
+                self.msg = "⚠ 這個資料夾裡的音樂都播不了……"
+                self.set_playing(False)
+                self.redraw_text()
+
+    def title(self):
+        return self.songs[self.cur][0].split("　（")[0] if self.opened and self.cur is not None else None
+
+    def stop_file(self):
+        if self.mf is not None:
+            self.mf.close()
+        self.mf = None
+        self.opened = False
+
+    def toggle(self):
+        if not self.opened:
+            if self.songs:
+                sel = self.lst.sel
+                self.play_index(sel if sel is not None else (self.cur or 0))
+            return
+        if self.playing:
+            self.mf.pause()
+            self.set_playing(False)
+        else:
+            self.mf.play()
+            self.set_playing(True)
+
+    def set_playing(self, on):
+        self.playing = on
+        try:
+            self.redraw_buttons()
+        except tk.TclError:
+            pass
+        self.w.music_state(on)
+
+    def next(self, auto=False):
+        if not self.songs:
+            return
+        if auto and self.repeat_one and self.cur is not None:
+            return self.play_index(self.cur, record=False)
+        if self.shuffle and len(self.songs) > 1:
+            i = random.choice([k for k in range(len(self.songs)) if k != self.cur])
+        else:
+            i = (self.cur + 1) if self.cur is not None else 0
+        self.play_index(i)
+
+    def prev(self):
+        if not self.songs:
+            return
+        if self.opened and self.position() > 3000:          # 播超過 3 秒：先回到這首的開頭
+            return self.seek(0)
+        if self.history:
+            return self.play_index(self.history.pop(), record=False)
+        self.play_index((self.cur or 0) - 1, record=False)
+
+    def position(self):
+        return self.mf.position() if self.mf is not None else 0
+
+    def seek(self, ms):
+        if not self.opened:
+            return
+        ms = max(0, min(int(ms), max(0, self.length - 300)))
+        self.mf.seek(ms)
+        self.pos_ms = ms
+        self.redraw_bar()
+
+    def set_volume(self, v):
+        self.volume = int(max(0, min(100, v)))
+        self.w.settings["music_volume"] = self.volume
+        if self.mf is not None:
+            self.mf.volume((self.volume / 100) ** 1.6)           # 人耳對音量是對數的：低音量那段調得細一點
+
+    def toggle_shuffle(self):
+        self.shuffle = not self.shuffle
+        self.w.settings["music_shuffle"] = self.shuffle
+        self.redraw_buttons()
+        self.redraw_text()
+
+    def toggle_repeat(self):
+        self.repeat_one = not self.repeat_one
+        self.w.settings["music_repeat_one"] = self.repeat_one
+        self.redraw_buttons()
+        self.redraw_text()
+
+    def tick(self):
+        """每 0.05 秒：唱片轉、唱臂移動；每 0.25 秒更新時間條，一首播完就接下一首。"""
+        try:
+            self.frame += 1
+            target = 1.0 if self.playing else 0.0
+            if abs(self.arm - target) > .01:
+                self.arm += (target - self.arm) * .25
+                self.draw_arm()
+            shown = self.top.state() != "iconic"
+            if self.playing and shown and self.frame % 3 == 0:
+                self.lst.tick_spin()
+            if shown and self.title_txt and self.title_overflows():
+                was = self.tq
+                self.tq += 2.0
+                if self.tq >= self.title_w + 40:
+                    self.tq = -40.0                                     # 繞完一圈：停一下
+                if (was > 0) != (self.tq > 0):
+                    self.draw_title()                                   # 開始捲／停下來：左邊的遮罩出現／收起來
+                elif self.tq > 0:
+                    self.move_title()
+            if self.playing and shown:
+                self.angle = (self.angle - 4) % 360
+                self.cv.itemconfig(self.rec_item, image=self.label_frame())
+            if self.frame % 5 == 0 and self.opened and self.playing:
+                if not self.length:                            # 剛打開：等它讀到長度（讀不到 5 秒就當作播不了）
+                    self.length = self.mf.length()
+                    self.wait += 1
+                    if not self.length and self.wait > 20:
+                        name = self.songs[self.cur][0] if self.cur is not None else ""
+                        return self.play_failed(name) or self.schedule()
+                    if self.length:
+                        self.set_volume(self.volume)
+                pos = self.position()
+                if self.drag != "seek":
+                    self.pos_ms = pos
+                    if shown:
+                        self.redraw_bar()
+                if self.length and (pos >= self.length - 250 or self.mf.state() == 1):     # 播完了
+                    self.next(auto=True)
+        except tk.TclError:
+            return
+        self.schedule()
+
+    def schedule(self):
+        self.job = self.top.after(50, self.tick)
+
+    def show(self):
+        if getattr(self, "minimized", False) or self.top.state() == "iconic":
+            self.top.deiconify()
+        self.top.lift()
+
+    def close(self):
+        """關掉播放器：音樂停掉。"""
+        try:
+            self.top.after_cancel(self.job)
+        except Exception:
+            pass
+        self.stop_file()
+        self.playing = False
+        self.w.player = None
+        self.w.music_state(False)
+        self.w.save()
+        try:
+            self.top.destroy()
+        except tk.TclError:
+            pass
+
+
 class GiantBar:
     """巨大化時右上角的小視窗：背景暗度、換卡片、開圖鑑、結束；可以縮小成兩顆小圓鈕。"""
 
@@ -6666,7 +8367,7 @@ class GiantBar:
         top.attributes("-topmost", True)
         top.configure(bg=bg)
         top.attributes("-alpha", .92)
-        font = ("Microsoft JhengHei", 10)
+        font = (FONT, 10)
         self.btn = btn = dict(bg="#463d4d", fg=fg, activebackground="#5d5266", activeforeground=fg, relief="flat",
                               font=font, padx=8, pady=2, cursor="hand2", bd=0, takefocus=0, highlightthickness=0)
         # 展開的樣子
@@ -6766,7 +8467,7 @@ class MiniPanel:
     def __init__(self, world):
         self.w = world
         top = self.top = tk.Toplevel(world.root)
-        top.title("DesktopPet")
+        top.title("AIchanDesk")
         top.configure(bg=C_BG)
         top.resizable(False, False)
         top.protocol("WM_DELETE_WINDOW", top.withdraw)
@@ -6792,6 +8493,7 @@ class MiniPanel:
         self.title = tk.Label(head, text="", bg=C_BG, fg=C_ACCENT, font=(FONT, 11, "bold"))
         self.title.pack(side="left")
         ttk.Button(head, text="完整面板 ⤢", style="Mini.TButton", command=lambda: world.switch_panel("full")).pack(side="right")
+        self.chrome = Chrome(top, head, top.withdraw)
         self.row = tk.Frame(top, bg=C_BG)
         self.row.pack(fill="x", padx=8, pady=2)
         grid = tk.Frame(top, bg=C_BG)
@@ -6866,6 +8568,16 @@ C_BG, C_CARD, C_LINE = "#fbf6f0", "#ffffff", "#eadfd4"
 C_TEXT, C_MUTED, C_ACCENT = "#3a2a25", "#9a8a80", "#e8763a"
 C_PINK, C_RED = "#ec6f95", "#e0533d"
 FONT = "Microsoft JhengHei"
+
+
+def use_cute_font(root):
+    """介面字體換成粉圓體（fonts 資料夾裡，只給這個程式用，不會裝到系統）；找不到就維持微軟正黑體。"""
+    global FONT
+    path = BASE / "fonts" / "jf-openhuninn-2.1.ttf"
+    if path.exists() and ctypes.windll.gdi32.AddFontResourceExW(str(path), 0x10, 0):    # FR_PRIVATE
+        fam = next((f for f in tkfont.families(root) if "粉圓" in f and not f.startswith("@")), None)
+        if fam:
+            FONT = fam
 STATE_NAMES = {"swing": "盪鞦韆中", "seesaw": "玩蹺蹺板中", "tramp": "跳彈跳床中", "hoop_peek": "躲在籃框後面偷看你", "ladder": "爬梯子", "slide_top": "在溜滑梯上", "slide": "溜滑梯中", "idle": "閒晃中", "walk": "散步中", "act": "表演中", "sleep": "睡覺中", "sulk": "賭氣中",
                "study": "陪讀中", "edge": "躲在螢幕邊邊", "drag": "被你拎著", "air": "飛在空中",
                "stack": "疊高高中", "tag": "玩鬼抓人中", "hide": "躲起來了", "chase": "追東西中",
@@ -6924,13 +8636,302 @@ class ScrollFrame(tk.Frame):
         self.canvas.yview_scroll(int(-e.delta / 120), "units")
 
 
+class PopMenu:
+    """自己畫的右鍵選單（Windows 原生的選單換不了字體）：用法跟 tk.Menu 一樣，
+    add_command / add_separator / add_cascade，最後 tk_popup(x, y)。點選單外面、按 Esc 就關掉。"""
+
+    def __init__(self, master, tearoff=0):
+        self.master = master if not isinstance(master, PopMenu) else master.master
+        self.items = []
+        self.top = None
+        self.sub = None              # 現在打開的子選單
+        self.parent = None
+        self.on_close = None
+
+    def add_command(self, label="", command=None, state="normal"):
+        self.items.append(("cmd", label, command, state))
+
+    def add_separator(self):
+        self.items.append(("sep", "", None, "normal"))
+
+    def add_cascade(self, label="", menu=None):
+        menu.parent = self
+        self.items.append(("sub", label, menu, "normal"))
+
+    def tk_popup(self, x, y, on_close=None):
+        self.on_close = on_close
+        self.open(x, y)
+        self.watch()
+
+    def open(self, x, y, beside=None):
+        t = self.top = tk.Toplevel(self.master)
+        t.withdraw()
+        t.overrideredirect(True)
+        t.attributes("-topmost", True)
+        t.configure(bg=C_LINE)
+        box = tk.Frame(t, bg=C_CARD, padx=4, pady=4)
+        box.pack(padx=1, pady=1)
+        for kind, label, obj, state in self.items:
+            if kind == "sep":
+                tk.Frame(box, bg=C_LINE, height=1).pack(fill="x", padx=8, pady=4)
+                continue
+            row = tk.Frame(box, bg=C_CARD, cursor="hand2" if state == "normal" else "")
+            row.pack(fill="x")
+            fg = C_MUTED if state == "disabled" else C_TEXT
+            lb = tk.Label(row, text=label, bg=C_CARD, fg=fg, font=(FONT, 10), anchor="w", padx=12, pady=4)
+            lb.pack(side="left", fill="x", expand=True)
+            parts = [row, lb]
+            if kind == "sub":
+                ar = tk.Label(row, text="›", bg=C_CARD, fg=C_MUTED, font=(FONT, 11), padx=8)
+                ar.pack(side="right")
+                parts.append(ar)
+            if state == "disabled":
+                continue
+            for wdg in parts:
+                wdg.bind("<Enter>", lambda e, r=row, ps=parts, k=kind, o=obj: self.hover(r, ps, k, o))
+                wdg.bind("<ButtonRelease-1>", lambda e, k=kind, o=obj: self.pick(k, o))
+        t.update_idletasks()
+        w, h = t.winfo_reqwidth(), t.winfo_reqheight()
+        L, T, R, B = work_area(x, y)
+        if beside is not None:                           # 子選單：放在右邊，放不下就放左邊
+            x0, x1 = beside
+            x = x1 - 2 if x1 - 2 + w <= R else x0 - w + 2
+        elif x + w > R:
+            x = x - w
+        y = min(y, B - h) if beside is not None else (y if y + h <= B else y - h)
+        t.geometry(f"+{int(max(L, x))}+{int(max(T, y))}")
+        t.deiconify()
+        t.lift()
+        t.bind("<Escape>", lambda e: self.root_menu().close())
+        t.focus_force()
+        self.hot = None
+
+    def root_menu(self):
+        m = self
+        while m.parent is not None and m.parent.top is not None:
+            m = m.parent
+        return m
+
+    def hover(self, row, parts, kind, obj):
+        if self.hot is not None:
+            for wdg in self.hot:
+                try:
+                    wdg.config(bg=C_CARD)
+                except tk.TclError:
+                    pass
+        self.hot = parts
+        for wdg in parts:
+            wdg.config(bg="#ffe2cc")
+        if self.sub is not None and self.sub is not obj:
+            self.sub.close_self()
+            self.sub = None
+        if kind == "sub" and self.sub is not obj:
+            self.sub = obj
+            obj.open(0, row.winfo_rooty() - 5, beside=(self.top.winfo_rootx(), self.top.winfo_rootx() + self.top.winfo_width()))
+
+    def pick(self, kind, obj):
+        if kind == "sub":
+            return
+        self.root_menu().close()
+        if obj:
+            self.master.after(1, obj)
+
+    def close_self(self):
+        if self.sub is not None:
+            self.sub.close_self()
+            self.sub = None
+        if self.top is not None:
+            try:
+                self.top.destroy()
+            except tk.TclError:
+                pass
+            self.top = None
+
+    def close(self):
+        self.close_self()
+        cb, self.on_close = self.on_close, None
+        if cb:
+            cb()
+
+    def windows(self):
+        out, m = [], self
+        while m is not None and m.top is not None:
+            out.append(m.top)
+            m = m.sub
+        return out
+
+    def watch(self):
+        """點到選單外面（左鍵、右鍵、中鍵）就關掉。"""
+        if self.top is None:
+            return
+        down = any(user32.GetAsyncKeyState(k) & 0x8000 for k in (1, 2, 4))
+        if not down:
+            self.armed = True                            # 打開選單的那一下放開以後才開始算「點外面」
+        for t in self.windows():                         # 一直待在最上面（小可愛也是最上層，不要被蓋住）
+            try:
+                user32.SetWindowPos(user32.GetParent(t.winfo_id()) or t.winfo_id(), wintypes.HWND(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)
+            except tk.TclError:
+                pass
+        if down and getattr(self, "armed", False):
+            px, py = self.master.winfo_pointerxy()
+            inside = False
+            for t in self.windows():
+                try:
+                    x0, y0 = t.winfo_rootx(), t.winfo_rooty()
+                    inside |= x0 <= px < x0 + t.winfo_width() and y0 <= py < y0 + t.winfo_height()
+                except tk.TclError:
+                    pass
+            if not inside:
+                return self.close()
+        self.master.after(40, self.watch)
+
+
+def ask(parent, title, message, initial=None, ok="確定", cancel="取消"):
+    """跟控制面板同一種風格的小對話框（沒有 Windows 標題列）。
+    initial 不是 None：多一個輸入框，按確定回傳輸入的字（取消回傳 None）；
+    initial 是 None：是／否的確認，回傳 True / False。"""
+    top = tk.Toplevel(parent)
+    top.withdraw()
+    top.overrideredirect(True)
+    top.attributes("-topmost", True)
+    top.configure(bg=C_LINE)
+    box = tk.Frame(top, bg=C_CARD, padx=18, pady=14)
+    box.pack(padx=1, pady=1)
+    head = tk.Frame(box, bg=C_CARD)
+    head.pack(fill="x")
+    tk.Label(head, text=title, bg=C_CARD, fg=C_ACCENT, font=(FONT, 12, "bold")).pack(side="left")
+    x = tk.Label(head, text="✕", bg=C_CARD, fg="#c0533d", font=(FONT, 11, "bold"), cursor="hand2", padx=4)
+    x.pack(side="right")
+    tk.Label(box, text=message, bg=C_CARD, fg=C_TEXT, font=(FONT, 10), justify="left", wraplength=360).pack(
+        anchor="w", pady=(10, 8))
+    result = {"v": None if initial is not None else False}
+    ent = None
+    if initial is not None:
+        ent = ttk.Entry(box, width=34, font=(FONT, 11))
+        ent.insert(0, initial)
+        ent.pack(fill="x", pady=(0, 4))
+    row = tk.Frame(box, bg=C_CARD)
+    row.pack(anchor="e", pady=(10, 0))
+
+    def done(yes):
+        if yes:
+            result["v"] = ent.get() if ent is not None else True
+        try:
+            top.grab_release()
+        except tk.TclError:
+            pass
+        top.destroy()
+    ttk.Button(row, text=cancel, width=8, command=lambda: done(False)).pack(side="right")
+    ttk.Button(row, text=ok, width=8, style="Accent.TButton", command=lambda: done(True)).pack(side="right", padx=(0, 8))
+    x.bind("<Button-1>", lambda e: done(False))
+    top.bind("<Return>", lambda e: done(True))
+    top.bind("<Escape>", lambda e: done(False))
+    # 按住標題那一排可以拖
+    grab = {}
+    head.bind("<ButtonPress-1>", lambda e: grab.update(d=(e.x_root - top.winfo_x(), e.y_root - top.winfo_y())))
+    head.bind("<B1-Motion>", lambda e: top.geometry(f"+{e.x_root - grab['d'][0]}+{e.y_root - grab['d'][1]}"))
+    top.update_idletasks()
+    w, h = top.winfo_reqwidth(), top.winfo_reqheight()
+    try:
+        px, py, pw, ph = parent.winfo_rootx(), parent.winfo_rooty(), parent.winfo_width(), parent.winfo_height()
+    except tk.TclError:
+        px, py, pw, ph = 0, 0, top.winfo_screenwidth(), top.winfo_screenheight()
+    top.geometry(f"+{px + (pw - w) // 2}+{py + max(0, (ph - h) // 3)}")
+    top.deiconify()
+    top.lift()
+    try:
+        top.grab_set()
+    except tk.TclError:
+        pass
+    (ent or top).focus_force()
+    if ent is not None:
+        ent.select_range(0, "end")
+        ent.icursor("end")
+    parent.wait_window(top)
+    return result["v"]
+
+
+class Chrome:
+    """自己畫的視窗外框：沒有 Windows 的標題列。標題那一排右邊放「－」（縮到工作列）「×」（關掉），
+    按住那一排拖著走；可以拉大小的視窗右下角有一個小三角可以拉。"""
+
+    def __init__(self, top, bar, on_close, resizable=False, minsize=(300, 200), line=None):
+        self.top, self.on_close, self.minsize = top, on_close, minsize
+        self.minimized = False
+        self.saved = None
+        top.configure(highlightthickness=1, highlightbackground=line or C_LINE, highlightcolor=line or C_LINE)
+        first = bar.winfo_children()[0] if bar.winfo_children() else None
+        bs = dict(bg=bar["bg"], font=(FONT, 11, "bold"), cursor="hand2", padx=7, pady=0)
+        x = tk.Label(bar, text="✕", fg="#c0533d", **bs)
+        m = tk.Label(bar, text="－", fg=C_MUTED, **bs)
+        for b, cmd, hover in ((x, on_close, "#fde3dc"), (m, self.minimize, "#f3e9df")):
+            b.pack(side="right", before=first) if first else b.pack(side="right")
+            b.bind("<Button-1>", lambda e, c=cmd: c())
+            b.bind("<Enter>", lambda e, b=b, h=hover: b.config(bg=h))
+            b.bind("<Leave>", lambda e, b=b: b.config(bg=bar["bg"]))
+        for wdg in [bar] + [c for c in bar.winfo_children() if isinstance(c, tk.Label) and c not in (x, m)]:
+            wdg.bind("<ButtonPress-1>", self.move_start)
+            wdg.bind("<B1-Motion>", self.move_drag)
+        if resizable:
+            grip = tk.Label(top, text="◢", fg=C_MUTED, bg=top["bg"], font=(FONT, 9), cursor="size_nw_se")
+            grip.place(relx=1.0, rely=1.0, anchor="se")
+            grip.bind("<ButtonPress-1>", self.size_start)
+            grip.bind("<B1-Motion>", self.size_drag)
+        top.bind("<Map>", self.on_map, add="+")
+        self.borderless()
+
+    def borderless(self):
+        try:
+            if not self.top.overrideredirect():
+                vis = self.top.state() != "withdrawn"
+                self.top.withdraw()
+                self.top.overrideredirect(True)
+                if self.saved:
+                    self.top.geometry(self.saved)
+                if vis:
+                    self.top.deiconify()
+        except tk.TclError:
+            pass
+
+    def minimize(self):
+        """縮到工作列：暫時變回一般視窗才縮得下去；從工作列叫回來時再變回沒有標題列。"""
+        t = self.top
+        self.saved = f"{t.winfo_width()}x{t.winfo_height()}+{t.winfo_x()}+{t.winfo_y()}"
+        self.minimized = True
+        t.withdraw()
+        t.overrideredirect(False)
+        t.update_idletasks()
+        t.iconify()
+
+    def on_map(self, e):
+        if self.minimized and e.widget is self.top:
+            self.minimized = False
+            self.top.after(30, self.borderless)
+
+    def move_start(self, e):
+        self.grab = (e.x_root - self.top.winfo_x(), e.y_root - self.top.winfo_y())
+
+    def move_drag(self, e):
+        dx, dy = getattr(self, "grab", (0, 0))
+        self.top.geometry(f"+{e.x_root - dx}+{e.y_root - dy}")
+
+    def size_start(self, e):
+        self.sz = (e.x_root, e.y_root, self.top.winfo_width(), self.top.winfo_height())
+
+    def size_drag(self, e):
+        x0, y0, w0, h0 = self.sz
+        w_ = max(self.minsize[0], w0 + e.x_root - x0)
+        h_ = max(self.minsize[1], h0 + e.y_root - y0)
+        self.top.geometry(f"{int(w_)}x{int(h_)}")
+
+
 class Panel:
     """控制面板：大家、待辦、紀錄、設定，後面每隻角色一頁。"""
 
     def __init__(self, world):
         self.w = world
         top = self.top = tk.Toplevel(world.root)
-        top.title("DesktopPet 控制面板")
+        top.title("AIchanDesk 控制面板")
         top.configure(bg=C_BG)
         top.geometry("760x780")
         top.minsize(700, 480)                    # 再小排版就會擠在一起
@@ -6945,8 +8946,9 @@ class Panel:
         self.job = None
         bar = tk.Frame(top, bg=C_BG)
         bar.pack(fill="x", padx=10, pady=(6, 0))
-        tk.Label(bar, text="DesktopPet 控制面板", bg=C_BG, fg=C_MUTED, font=(FONT, 9)).pack(side="left")
+        tk.Label(bar, text="AIchanDesk - 你的桌面小可愛們", bg=C_BG, fg=C_MUTED, font=(FONT, 9)).pack(side="left")
         ttk.Button(bar, text="切換成小面板 ⇲", command=lambda: world.switch_panel("mini")).pack(side="right")
+        self.chrome = Chrome(top, bar, top.withdraw, resizable=True, minsize=(700, 480))
         # 分頁按鈕自己排成兩列（ttk 的分頁列不會換行）：上面是功能、下面是每隻角色
         self.tabbar = tk.Frame(top, bg=C_BG)
         self.tabbar.pack(fill="x", padx=10, pady=(4, 0))
@@ -7032,7 +9034,32 @@ class Panel:
                      lightcolor=C_PINK, darkcolor=C_PINK, thickness=10)
         st.configure("Anger.Horizontal.TProgressbar", troughcolor="#f6e3df", background=C_RED, bordercolor="#f6e3df",
                      lightcolor=C_RED, darkcolor=C_RED, thickness=10)
-        st.configure("TCombobox", fieldbackground="#fffaf5")
+        st.configure("TCombobox", fieldbackground="#fffaf5", foreground=C_TEXT, selectbackground="#fffaf5",
+                     selectforeground=C_TEXT, arrowcolor=C_ACCENT)
+        st.map("TCombobox", fieldbackground=[("readonly", "#fffaf5"), ("disabled", "#f7f3ef")],
+               selectbackground=[("readonly", "#fffaf5"), ("focus", "#fffaf5")],
+               selectforeground=[("readonly", C_TEXT), ("focus", C_TEXT)],
+               foreground=[("readonly", C_TEXT)], background=[("readonly", "#fffaf5"), ("active", "#fffaf5")])
+        # 下拉出來的清單也換成一樣的顏色
+        self.top.option_add("*TCombobox*Listbox.background", "#fffaf5")
+        self.top.option_add("*TCombobox*Listbox.foreground", C_TEXT)
+        self.top.option_add("*TCombobox*Listbox.selectBackground", "#ffd9bf")
+        self.top.option_add("*TCombobox*Listbox.selectForeground", C_TEXT)
+        self.top.option_add("*TCombobox*Listbox.font", (FONT, 10))
+        # 選完、按完：把焦點還給視窗，選單和按鈕都恢復原樣（不要留著「剛剛點過」的樣子）
+        rest = lambda e: e.widget.after_idle(lambda: settle(e.widget))
+
+        def settle(wdg):
+            try:
+                if isinstance(wdg, ttk.Combobox):
+                    wdg.selection_clear()
+                if wdg.focus_get() is wdg:                     # 焦點還在它身上才收走（按鈕打開了別的視窗就不要搶）
+                    wdg.winfo_toplevel().focus_set()
+            except tk.TclError:
+                pass
+        self.top.bind_class("TCombobox", "<<ComboboxSelected>>", rest, add="+")
+        for cls in ("TButton", "TCheckbutton", "TRadiobutton"):
+            self.top.bind_class(cls, "<ButtonRelease-1>", rest, add="+")
         st.configure("TEntry", fieldbackground="#fffaf5")
 
     def check_images(self, st):
@@ -7047,7 +9074,9 @@ class Panel:
                                 outline=fill if checked else "#d8c8bb", width=5)
             if checked:
                 d.line([(n * .9, n * 2.1), (n * 1.7, n * 2.9), (n * 3.1, n * 1.2)], fill="#ffffff", width=9, joint="curve")
-            return ImageTk.PhotoImage(im.resize((n, n), Image.LANCZOS))
+            out = Image.new("RGBA", (n + 5, n), (0, 0, 0, 0))     # 右邊留一點空，勾勾跟文字不要黏在一起
+            out.paste(im.resize((n, n), Image.LANCZOS), (0, 0))
+            return ImageTk.PhotoImage(out)
         self.ck = [box(False), box(True), box(True, True), box(False)]
         st.element_create("Pet.check", "image", self.ck[0], ("disabled", "selected", self.ck[2]),
                           ("selected", self.ck[1]), ("disabled", self.ck[3]), sticky="w")
@@ -7056,6 +9085,23 @@ class Panel:
             ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": [
                 ("Checkbutton.label", {"sticky": "nswe"})]})]})])
         st.configure("TCheckbutton", padding=(2, 2))
+
+        def dot(on):                                       # 單選的小圓：跟勾勾同一種風格
+            im = Image.new("RGBA", (n * 4, n * 4), (0, 0, 0, 0))
+            d = ImageDraw.Draw(im)
+            d.ellipse((2, 2, n * 4 - 3, n * 4 - 3), fill="#ffffff", outline=C_ACCENT if on else "#d8c8bb", width=5)
+            if on:
+                d.ellipse((n * 1.1, n * 1.1, n * 2.9, n * 2.9), fill=C_ACCENT)
+            out = Image.new("RGBA", (n + 5, n), (0, 0, 0, 0))
+            out.paste(im.resize((n, n), Image.LANCZOS), (0, 0))
+            return ImageTk.PhotoImage(out)
+        self.ck += [dot(False), dot(True)]
+        st.element_create("Pet.radio", "image", self.ck[4], ("selected", self.ck[5]), sticky="w")
+        st.layout("TRadiobutton", [("Radiobutton.padding", {"sticky": "nswe", "children": [
+            ("Pet.radio", {"side": "left", "sticky": ""}),
+            ("Radiobutton.focus", {"side": "left", "sticky": "w", "children": [
+                ("Radiobutton.label", {"sticky": "nswe"})]})]})])
+        st.configure("TRadiobutton", padding=(2, 2))
         no_focus_ring(st)
 
     # ---------- 小工具 ----------
@@ -7071,8 +9117,8 @@ class Panel:
         k = key if key is not None else text
         self.tabs[k] = sf
         row = self.tabrows[1 if image else 0]
-        b = tk.Label(row, text=text, image=image or "", compound="left", bg="#efe4d8", fg=C_TEXT, font=(FONT, 10),
-                     padx=9, pady=3, cursor="hand2", bd=0)
+        b = tk.Label(row, text=text, image=image or "", compound="left", bg="#efe4d8", fg=C_TEXT, font=(FONT, 11),
+                     padx=10, pady=3, cursor="hand2", bd=0)
         b.pack(side="left", padx=(0, 3))
         b.bind("<Button-1>", lambda e, sf=sf: self.nb.select(sf))
         self.tab_btns[k] = b
@@ -7085,9 +9131,11 @@ class Panel:
         inner.pack(fill="both", padx=1, pady=1)
         head = tk.Frame(inner, bg=C_CARD)
         head.pack(fill="x")
-        tk.Label(head, text=title, bg=C_CARD, fg=color, font=(FONT, 11, "bold")).pack(side="left")
-        if note:
-            tk.Label(head, text=note, bg=C_CARD, fg=C_MUTED, font=(FONT, 9)).pack(side="left", padx=8)
+        tk.Label(head, text=title, bg=C_CARD, fg=color, font=(FONT, 11, "bold"), pady=0).pack(side="left", anchor="s")
+        if note:                                                 # 小字跟標題底線對齊（不要置中，置中看起來會比較高）
+            big, small = tkfont.Font(font=(FONT, 11, "bold")), tkfont.Font(font=(FONT, 9))
+            dy = max(0, big.metrics("descent") - small.metrics("descent"))
+            tk.Label(head, text=note, bg=C_CARD, fg=C_MUTED, font=(FONT, 9), pady=0).pack(side="left", anchor="s", padx=8, pady=(0, dy))
         body = tk.Frame(inner, bg=C_CARD)
         body.pack(fill="x", pady=(6, 0))
         return body
@@ -7101,8 +9149,8 @@ class Panel:
                 row=i // cols, column=i % cols, padx=3, pady=3, sticky="ew")
 
     def label(self, parent, text="", muted=False, size=10, bold=False, **kw):
-        return tk.Label(parent, text=text, bg=C_CARD, fg=C_MUTED if muted else C_TEXT,
-                        font=(FONT, size, "bold" if bold else "normal"), **kw)
+        kw.setdefault("fg", C_MUTED if muted else C_TEXT)
+        return tk.Label(parent, text=text, bg=C_CARD, font=(FONT, size, "bold" if bold else "normal"), **kw)
 
     def pet(self, cid):
         return self.w.pets.get(cid)
@@ -7133,7 +9181,12 @@ class Panel:
                             ("賽跑", w.start_race), ("捉迷藏", w.start_hide_seek), ("鬼抓人", w.start_tag),
                             ("一起睡覺", w.all_sleep), ("叫醒大家", w.all_wake)], cols=4)
 
-        body = self.card(f, "遊樂器材", note="勾選就會出現；球門、溜滑梯可以拖著左右移動，籃框固定在右邊")
+        body = self.card(f, "音樂", note="誰來播音樂：請一隻當 DJ，播放器會換成她的顏色；大家會跟著一起跳舞")
+        ttk.Button(body, text="🎵 音樂播放器", style="Accent.TButton", command=w.open_music).grid(row=0, column=0, sticky="w")
+        self.label(body, "想換誰當 DJ：右鍵點她選「請她放音樂」，或到她自己的分頁按「請她放音樂」", muted=True, size=9).grid(
+            row=0, column=1, sticky="w", padx=8)
+
+        body = self.card(f, "遊樂器材", note="勾選就會出現；籃框、球門固定在螢幕兩邊（拖過去會換邊），其他的可以拖到任何地方")
         self.equip_vars = {}
         for i, (kind, label) in enumerate(EQUIP.items()):
             v = tk.BooleanVar(value=kind in w.equip)
@@ -7172,8 +9225,8 @@ class Panel:
         w = self.w
         w.save()
         path = filedialog.asksaveasfilename(parent=self.top, title="匯出設定", defaultextension=".json",
-                                            initialfile=f"DesktopPet設定_{datetime.date.today():%Y%m%d}.json",
-                                            filetypes=[("DesktopPet 設定", "*.json")])
+                                            initialfile=f"AIchanDesk設定_{datetime.date.today():%Y%m%d}.json",
+                                            filetypes=[("AIchanDesk 設定", "*.json")])
         if not path:
             return
         try:
@@ -7185,18 +9238,18 @@ class Panel:
     def import_settings(self):
         from tkinter import filedialog, messagebox
         w = self.w
-        path = filedialog.askopenfilename(parent=self.top, title="匯入設定", filetypes=[("DesktopPet 設定", "*.json")])
+        path = filedialog.askopenfilename(parent=self.top, title="匯入設定", filetypes=[("AIchanDesk 設定", "*.json")])
         if not path:
             return
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
             if not isinstance(data, dict) or not ({"love", "cards", "stats", "names", "first_day"} & set(data)):
-                raise ValueError("這不是 DesktopPet 的設定檔")
+                raise ValueError("not a settings file")
         except Exception:
-            self.move_msg.config(text="讀不了這個檔案：這不是 DesktopPet 匯出的設定檔喔")
+            self.move_msg.config(text="讀不了這個檔案：這不是 AIchanDesk（或舊版 DesktopPet）匯出的設定檔喔")
             return
-        if not messagebox.askyesno("匯入設定", "匯入以後，現在的好感度、卡片、名字、成就和紀錄都會換成檔案裡的。\n程式會自動重新開啟。確定嗎？",
-                                   parent=self.top):
+        if not ask(self.top, "匯入設定", "匯入以後，現在的好感度、卡片、名字、成就和紀錄都會換成檔案裡的。\n程式會自動重新開啟。確定嗎？",
+                   ok="匯入"):
             return
         w.restart_with(data)
 
@@ -7221,23 +9274,56 @@ class Panel:
     # ---------- 待辦 ----------
     def build_todo(self):
         f = self.page("待辦")
-        body = self.card(f, "新增待辦", note="時間可以不填；填了時間到會有人來提醒你")
-        self.todo_text = ttk.Entry(body, width=30)
-        self.todo_text.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        body = self.card(f, "新增待辦", note="時間可以不填；填了時間到，你選的那隻會來提醒你")
+        self.label(body, "要做什麼", muted=True, size=9).grid(row=0, column=0, sticky="w")
+        self.label(body, "什麼時候", muted=True, size=9).grid(row=0, column=1, sticky="w")
+        self.label(body, "重複", muted=True, size=9).grid(row=0, column=2, sticky="w")
+        self.label(body, "誰來提醒", muted=True, size=9).grid(row=0, column=3, sticky="w")
+        self.todo_text = ttk.Entry(body, width=24)
+        self.todo_text.grid(row=1, column=0, sticky="ew", padx=(0, 6))
         self.todo_time = ttk.Entry(body, width=12)
-        self.todo_time.grid(row=0, column=1, padx=(0, 6))
-        self.todo_rep = ttk.Combobox(body, values=[n for _, n in REPEATS], state="readonly", width=12)
+        self.todo_time.grid(row=1, column=1, padx=(0, 6))
+        self.todo_rep = ttk.Combobox(body, values=[n for _, n in REPEATS], state="readonly", width=11)
         self.todo_rep.set(REPEATS[0][1])
-        self.todo_rep.grid(row=0, column=2, padx=(0, 6))
+        self.todo_rep.grid(row=1, column=2, padx=(0, 6))
         self.todo_rep.bind("<<ComboboxSelected>>", lambda e: self.todo_preview())
-        ttk.Button(body, text="新增", style="Accent.TButton", command=self.add_todo).grid(row=0, column=3)
+        self.todo_who_names = {"隨便一隻": None} | {self.w.disp_name(c): c for c in self.w.base_ids()}
+        self.todo_who = ttk.Combobox(body, values=list(self.todo_who_names), state="readonly", width=9)
+        self.todo_who.set("隨便一隻")
+        self.todo_who.grid(row=1, column=3, padx=(0, 6))
+        ttk.Button(body, text="新增", style="Accent.TButton", command=self.add_todo).grid(row=1, column=4)
         body.columnconfigure(0, weight=1)
+        quick = tk.Frame(body, bg=C_CARD)
+        quick.grid(row=3, column=0, columnspan=5, sticky="w", pady=(8, 0))
+        self.label(quick, "提醒我：", muted=True).pack(side="left")
+        for m in (5, 10, 25, 60):
+            ttk.Button(quick, text=f"{m} 分鐘後", command=lambda m=m: self.quick_remind(m)).pack(side="left", padx=3)
+        self.label(quick, "（上面有打字的話，就提醒那件事）", muted=True, size=9).pack(side="left", padx=6)
         self.todo_text.bind("<Return>", lambda e: self.add_todo())
         self.todo_time.bind("<Return>", lambda e: self.add_todo())
         self.todo_time.bind("<KeyRelease>", lambda e: self.todo_preview())
-        self.todo_msg = self.label(body, "時間的寫法：9:30、930、9點半、下午3點、30秒後、30分鐘後、1小時後（不填＝不提醒）", muted=True, size=9)
-        self.todo_msg.grid(row=1, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        self.todo_msg = self.label(body, "時間的寫法：9:30、9點半、下午3點、明天早上8點、30秒後、30分鐘後、1小時後（不填＝不提醒）", muted=True, size=9)
+        self.todo_msg.grid(row=2, column=0, columnspan=5, sticky="w", pady=(4, 0))
         self.todo_body = self.card(f, "清單", note="打勾＝完成，她們會誇你")
+
+    def todo_by(self):
+        return self.todo_who_names.get(self.todo_who.get())
+
+    def quick_remind(self, minutes):
+        """「提醒我：幾分鐘後」：由選的那隻（沒選就隨便一隻）來提醒；上面有打字就提醒那件事。"""
+        w = self.w
+        by = self.todo_by()
+        p = (w.pets.get(by) if by else None) or w.pick_pet()
+        if p is None:
+            p = w.todo_pet(by)
+        if p is None:
+            return
+        text = self.todo_text.get().strip() or None
+        w.remind_in(p, minutes, text)
+        self.todo_text.delete(0, "end")
+        self.todo_msg.config(text=f"✓ {dur_text(minutes * 60)}後，{w.disp_name(p.base_id)}會來提醒你", fg=C_ACCENT)
+        self.todo_sig = None
+        self.refresh_todos()
 
     def todo_repeat(self):
         name = self.todo_rep.get()
@@ -7249,7 +9335,7 @@ class Panel:
         if due is False and rep != "none":
             self.todo_msg.config(text="要重複提醒的話，請填時間喔（例如 10:00）", fg="#d0573c")
         elif due is False:
-            self.todo_msg.config(text="時間的寫法：9:30、930、9點半、下午3點、30秒後、30分鐘後、1小時後（不填＝不提醒）", fg=C_MUTED)
+            self.todo_msg.config(text="時間的寫法：9:30、9點半、下午3點、明天早上8點、30秒後、30分鐘後、1小時後（不填＝不提醒）", fg=C_MUTED)
         elif due is None:
             self.todo_msg.config(text="看不懂這個時間……試試 9:30、下午3點、30秒後、30分鐘後", fg="#d0573c")
         elif rep != "none":
@@ -7271,6 +9357,8 @@ class Panel:
             return
         td = {"text": t, "time": "", "done": False, "notified": "",
               "made": datetime.datetime.now().isoformat(timespec="seconds")}
+        if self.todo_by():
+            td["by"] = self.todo_by()
         if due:
             if rep != "none":
                 due = first_due(due, rep)
@@ -7298,7 +9386,27 @@ class Panel:
         if not todos:
             self.label(self.todo_body, "目前沒有待辦事項 🎉", muted=True).pack(anchor="w")
             return
-        for td in sorted(todos, key=lambda d: (d.get("done"), d.get("time") or "99:99")):
+        today = datetime.date.today()
+
+        def group(td):
+            if td.get("done"):
+                return 4
+            if td.get("repeat", "none") != "none":
+                return 2
+            if td.get("at"):
+                try:
+                    return 0 if datetime.datetime.fromisoformat(td["at"]).date() <= today else 1
+                except ValueError:
+                    return 3
+            return 3
+        names = ("今天", "之後", "重複的", "沒有時間的", "已完成")
+        last = None
+        for td in sorted(todos, key=lambda d: (group(d), d.get("at") or "9999", d.get("text", ""))):
+            g = group(td)
+            if g != last:                                       # 分區的小標題
+                last = g
+                self.label(self.todo_body, names[g], bold=True, size=9, fg=C_ACCENT if g < 4 else C_MUTED).pack(
+                    anchor="w", pady=(8 if g else 0, 2))
             row = tk.Frame(self.todo_body, bg=C_CARD)
             row.pack(fill="x", pady=2)
             v = tk.BooleanVar(value=td.get("done"))
@@ -7314,6 +9422,8 @@ class Panel:
                 except ValueError:
                     tag = td.get("time", "")
                 self.label(row, "⏰ " + tag, muted=True).pack(side="left", padx=8)
+            if td.get("by") in self.w.chars and (td.get("at") or td.get("time")):
+                self.label(row, f"{self.w.disp_name(td['by'])}提醒", muted=True, size=9).pack(side="left", padx=4)
             ttk.Button(row, text="刪除", width=5, command=lambda td=td: self.todo_del(td)).pack(side="right")
         ttk.Button(self.todo_body, text="清除已完成", command=self.todo_clear).pack(anchor="e", pady=(6, 0))
 
@@ -7351,6 +9461,17 @@ class Panel:
     def build_topics(self):
         w = self.w
         f = self.page("話題")
+        body = self.card(f, "讓她說", note="選一隻、打一句話，按 Enter 她就會說出來")
+        self.say_names = {w.disp_name(c): c for c in w.base_ids()}
+        self.say_who = ttk.Combobox(body, values=list(self.say_names), state="readonly", width=9)
+        self.say_who.set(next((w.disp_name(c) for c in w.pets), next(iter(self.say_names))))
+        self.say_who.grid(row=0, column=0, padx=(0, 6))
+        self.say_entry = ttk.Entry(body)
+        self.say_entry.grid(row=0, column=1, sticky="ew", padx=(0, 6))
+        self.say_entry.bind("<Return>", lambda e: self.let_say())
+        ttk.Button(body, text="讓她說", style="Accent.TButton", command=self.let_say).grid(row=0, column=2)
+        body.columnconfigure(1, weight=1)
+
         body = self.card(f, "說話模式")
         self.mode_var = tk.StringVar(value=w.settings.get("talk_mode", "daily"))
         for i, (k, label) in enumerate((("daily", "日常：平常的閒聊"), ("pro", "認真：只講勾選的專業話題"),
@@ -7399,6 +9520,23 @@ class Panel:
         self.cat_entry.pack(side="left")
         ttk.Button(newc, text="新增", command=self.topic_add_cat).pack(side="left", padx=6)
         self.topic_cats()
+
+    def let_say(self):
+        w = self.w
+        t = self.say_entry.get().strip()
+        cid = self.say_names.get(self.say_who.get())
+        if not t or not cid:
+            return
+        if cid not in w.pets and not w.giant:
+            w.spawn(cid, greet=False)
+        p = w.pets.get(cid)
+        if p:
+            w.interrupt(p)
+            p.touch()
+            if not p.giant and p.state in ("idle", "walk", "act"):
+                p.act("happy", max(2.0, len(t) / 7))
+            p.say(text=t, force=True, secs=max(3.5, len(t) / 6))
+        self.say_entry.delete(0, "end")
 
     def topic_cats(self, select=None):
         tp = self.w.topics()
@@ -7557,7 +9695,7 @@ class Panel:
     # ---------- 相簿 ----------
     def build_album(self):
         f = self.page("相簿")
-        body = self.card(f, "合照", note="右鍵選單或系統匣的「拍照 📸」會把桌面上的大家拍下來")
+        body = self.card(f, "合照", note="右鍵選單或系統匣的「拍照」會把桌面上的大家拍下來")
         row = tk.Frame(body, bg=C_CARD)
         row.pack(fill="x")
         ttk.Button(row, text="拍一張 📸", style="Accent.TButton", command=self.w.take_photo).pack(side="left")
@@ -7714,13 +9852,21 @@ class Panel:
         ttk.Button(body, text="匯入設定…", command=self.import_settings).grid(row=0, column=1)
         self.move_msg = self.label(body, "", muted=True)
         self.move_msg.grid(row=0, column=2, sticky="w", padx=8)
-        body = self.card(f, "你的生日", note="格式 月-日，例如 03-14；當天大家會幫你慶生")
-        self.bd = ttk.Entry(body, width=8)
-        self.bd.insert(0, w.settings.get("birthday", ""))
-        self.bd.grid(row=0, column=0)
-        ttk.Button(body, text="儲存", command=self.save_bd).grid(row=0, column=1, padx=6)
+        body = self.card(f, "你的生日", note="選好月和日按儲存；當天大家會幫你慶生")
+        bd = w.settings.get("birthday", "")
+        bm, bdd = (bd.split("-") + [""])[:2] if bd else ("", "")
+        self.bd_m = ttk.Combobox(body, values=[f"{m} 月" for m in range(1, 13)], state="readonly", width=6)
+        self.bd_m.grid(row=0, column=0)
+        self.bd_d = ttk.Combobox(body, state="readonly", width=6)
+        self.bd_d.grid(row=0, column=1, padx=(6, 0))
+        self.bd_m.set(f"{int(bm)} 月" if bm else "選月份")
+        self.bd_m.bind("<<ComboboxSelected>>", lambda e: self.bd_days())
+        self.bd_days()
+        self.bd_d.set(f"{int(bdd)} 日" if bdd else "選日期")
+        ttk.Button(body, text="儲存", style="Accent.TButton", width=6, command=self.save_bd).grid(row=0, column=2, padx=(10, 4))
+        ttk.Button(body, text="清除", width=6, command=lambda: self.save_bd(clear=True)).grid(row=0, column=3)
         self.bd_msg = self.label(body, "", muted=True)
-        self.bd_msg.grid(row=0, column=2, sticky="w")
+        self.bd_msg.grid(row=0, column=4, sticky="w", padx=8)
 
         body = self.card(f, "今天吃什麼的清單", note="問她「今天吃什麼」時從這裡挑")
         self.food_list = tk.Listbox(body, height=7, bg="#fffaf5", fg=C_TEXT, selectbackground="#ffd9bf",
@@ -7744,13 +9890,24 @@ class Panel:
         self.label(body, "快捷鍵 Ctrl+Alt+P：全部藏起來／叫回來", muted=True).pack(anchor="w", pady=(4, 0))
         ttk.Button(body, text="全部掰掰（關閉程式）", command=w.quit).pack(anchor="e", pady=(6, 0))
 
-    def save_bd(self):
-        v = self.bd.get().strip().replace("/", "-")
-        m = re.fullmatch(r"(\d{1,2})-(\d{1,2})", v)
-        if v and not (m and 1 <= int(m.group(1)) <= 12 and 1 <= int(m.group(2)) <= 31):
-            self.bd_msg.config(text="格式不對喔，例如 03-14")
-            return
-        v = f"{int(m.group(1)):02d}-{int(m.group(2)):02d}" if v else ""
+    def bd_days(self):
+        """日的選單跟著月份變：2 月到 29 號（閏年生日也選得到），小月到 30 號。"""
+        m = int(self.bd_m.get().split()[0]) if self.bd_m.get()[:1].isdigit() else 1
+        n = 29 if m == 2 else 30 if m in (4, 6, 9, 11) else 31
+        self.bd_d.config(values=[f"{d} 日" for d in range(1, n + 1)])
+        if self.bd_d.get()[:1].isdigit() and int(self.bd_d.get().split()[0]) > n:
+            self.bd_d.set(f"{n} 日")
+
+    def save_bd(self, clear=False):
+        if clear:
+            self.bd_m.set("選月份")
+            self.bd_d.set("選日期")
+            v = ""
+        else:
+            if not self.bd_m.get()[:1].isdigit() or not self.bd_d.get()[:1].isdigit():
+                self.bd_msg.config(text="月和日都要選喔")
+                return
+            v = f"{int(self.bd_m.get().split()[0]):02d}-{int(self.bd_d.get().split()[0]):02d}"
         self.w.settings["birthday"] = v
         self.w.save()
         self.bd_msg.config(text="記住了！" if v else "已清除")
@@ -7802,9 +9959,8 @@ class Panel:
         name_lb.pack(side="left")
 
         def rename():
-            from tkinter import simpledialog
-            v = simpledialog.askstring("改名字", f"幫{w.disp_name(cid)}取個新名字（留空＝原本的名字）",
-                                       initialvalue=w.settings.get("names", {}).get(cid, ""), parent=self.top)
+            v = ask(self.top, "改名字", f"幫{w.disp_name(cid)}取個新名字（留空＝原本的名字）",
+                    initial=w.settings.get("names", {}).get(cid, ""))
             if v is None:
                 return
             v = v.strip()
@@ -7855,6 +10011,7 @@ class Panel:
             ("撒嬌", lambda: self.do(cid, w.mischief)),
             ("說說話", lambda: self.do(cid, w.chat)),
             ("講專業話題", lambda: self.do(cid, lambda p: w.talk_topic(p, force=True))),
+            ("請她放音樂", lambda: w.open_music(cid)),
         ], cols=4)
         wd["follow"] = tk.BooleanVar()
         ttk.Checkbutton(body, text="跟著滑鼠走", variable=wd["follow"],
@@ -7895,28 +10052,14 @@ class Panel:
                                 command=lambda sk=sk: self.do(cid, lambda p: w.change_outfit(p, sk))).grid(
                     row=0, column=i, padx=6)
 
-        body = self.card(f, "提醒我、讓她說", color)
-        wd["frames"].append(body)
-        for i, m in enumerate((5, 10, 25, 60)):
-            ttk.Button(body, text=f"{m} 分鐘後", command=lambda m=m: self.do(cid, lambda p: w.remind_in(p, m))).grid(
-                row=0, column=i, padx=3, sticky="ew")
-            body.columnconfigure(i, weight=1)
-        ent = ttk.Entry(body)
-        ent.grid(row=1, column=0, columnspan=3, sticky="ew", padx=3, pady=(8, 0))
-
-        def speak(e=None):
-            t = ent.get().strip()
-            if t:
-                self.do(cid, lambda p: (p.act("happy", 2), p.say(text=t, force=True, secs=4)))
-                ent.delete(0, "end")
-        ent.bind("<Return>", speak)
-        ttk.Button(body, text="讓她說", style="Accent.TButton", command=speak).grid(row=1, column=3, padx=3, pady=(8, 0), sticky="ew")
 
     # ---------- 顯示、更新 ----------
     def show(self, cid=None):
         if self.job:
             self.top.after_cancel(self.job)
             self.job = None
+        if self.top.state() == "withdrawn" and not self.chrome.minimized:
+            self.chrome.borderless()
         self.top.deiconify()
         self.top.lift()
         self.nb.select(self.tabs.get(cid) or self.tabs["大家"])
@@ -8018,7 +10161,18 @@ class Panel:
 
 def startup_link():
     import os
-    return Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/DesktopPet.lnk"
+    return Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/AIchanDesk.lnk"
+
+
+def migrate_startup():
+    """舊版叫 DesktopPet：開機啟動的捷徑換成新名字、指到現在這個 exe。"""
+    old = startup_link().with_name("DesktopPet.lnk")
+    if old.exists():
+        try:
+            old.unlink()
+            set_startup(True)
+        except Exception:
+            log_error()
 
 
 def set_startup(on):
@@ -8034,7 +10188,7 @@ def set_startup(on):
 def main():
     tries = 40 if "--restart" in sys.argv else 1         # 匯入設定後重開：等舊的那個關掉
     for _ in range(tries):
-        hm = kernel32.CreateMutexW(None, False, "DesktopPet_single_instance")
+        hm = kernel32.CreateMutexW(None, False, "DesktopPet_single_instance")   # 沿用舊名字：新舊版不會同時開兩組
         if kernel32.GetLastError() != 183:
             break
         kernel32.CloseHandle(hm)
@@ -8045,6 +10199,8 @@ def main():
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
+    if getattr(sys, "frozen", False):
+        migrate_startup()
     try:
         w = World()
         w.run()
