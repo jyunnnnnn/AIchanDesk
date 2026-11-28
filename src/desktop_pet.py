@@ -147,6 +147,8 @@ RARITY_COLOR = {"N": "#9a8a80", "R": "#4a8fd6", "SR": "#b05bd6", "SSR": "#e0a020
 
 # 遊樂器材和生活動作用的姿勢（坐、撲、躺……）：只在那些情境出現，不當卡片、不放「做個動作」
 ACTION_POSES = {"swing", "dive"}
+TOPICS_VER = 2             # 預設話題（characters/topics.json）的版本：加了新句子就 +1，舊使用者升級時會補進去
+PLAY_STATES = ("swing", "seesaw", "tramp", "ladder", "slide_top", "slide", "hoop_peek")   # 正在玩器材的狀態
 SPRITE_REF_H = 640         # 立繪的比例尺：站著的角色是 640px 高；躺著、撲球的圖可以比較寬、撐傘的可以比較高
 
 
@@ -206,7 +208,7 @@ ACHIEVEMENTS = [
 SHOT_SPREAD = 1.75           # 投籃的誤差（籃框半徑的幾倍）：大約七成會進
 KICK_VY = ((2, 8, 1.0), (9, 14, 1.0), (15, 20, 1.0), (22, 30, 1.0))    # 射門的高度（最低, 最高, 機率權重）：大約七成會進
 
-APP_VERSION = "1.3.0"                 # 發新版時跟 Release 的 tag 一起改
+APP_VERSION = "1.3.1"                 # 發新版時跟 Release 的 tag 一起改
 RELEASE_API = "https://api.github.com/repos/jyunnnnnn/AIchanDesk/releases/latest"
 RELEASE_PAGE = "https://github.com/jyunnnnnn/AIchanDesk/releases/latest"
 
@@ -217,17 +219,17 @@ GENERIC = {
     "welcome": ["歡迎回來！"], "meal": ["吃飯時間到了～"], "party": ["派對開始！"],
     "race_start": ["我會贏的！"], "race_win": ["第一名！"], "race_lose": ["差一點……"],
     "share": ["分我一口！"], "eat_lose": ["被搶走了……"], "fortune": ["幫你看看今天的運勢～"],
-    "stack_top": ["好高～", "風景不錯！", "嘿嘿，我在上面"], "stack_bottom": ["好重……", "下、下去啦！", "頭、頭要被壓扁了"],
+    "stack_top": ["好高～", "風景不錯！", "嘿嘿，我在上面", "我是最高的！", "下面的辛苦了～", "看得好遠喔！"], "stack_bottom": ["好重……", "下、下去啦！", "頭、頭要被壓扁了", "你、你好重……", "我快撐不住了啦", "腳在發抖……"],
     "stack_topple": ["哇啊啊！", "要、要倒了——！", "呀！"],
-    "stack_free": ["呼……終於下來了", "脖子好痠……", "下次換我在上面！"],
+    "stack_free": ["呼……終於下來了", "脖子好痠……", "下次換我在上面！", "呼～肩膀輕鬆了", "終於可以動了！"],
     "jealous": ["我也要摸！", "都只摸她……", "（嘟嘴）我也在這裡耶"], "jealous_ok": ["嘿嘿……這還差不多", "早說嘛～"],
-    "tag_start": ["我當鬼！", "來抓人囉～"], "tag_caught": ["抓到了！換你當鬼！", "抓到你了！"],
-    "tag_got": ["被抓到了～", "可惡！"], "tag_end": ["好累……", "跑不動了～", "好好玩！"],
-    "tease": ["抓到你了！", "嘿！", "別跑！"], "climb": ["嘿咻！", "上去看看～"], "ride": ["哇——！", "晃、晃得好厲害！"],
-    "fall": ["哇啊——掉下去了！", "地板不見了！"], "found": ["被找到了！", "嗚，好快！", "你怎麼知道我在這裡？"],
-    "hs_count": ["我數到五喔～\n1、2、3、4、5！好了沒？"], "trip": ["哎呀！", "痛痛……", "跌倒了……"],
+    "tag_start": ["我當鬼！", "來抓人囉～", "鬼抓人開始！", "被我抓到就換你當鬼！"], "tag_caught": ["抓到了！換你當鬼！", "抓到你了！", "換你當鬼囉～", "抓～到～了！"],
+    "tag_got": ["被抓到了～", "可惡！", "怎麼那麼快……", "嗚，被抓了"], "tag_end": ["好累……", "跑不動了～", "好好玩！", "跑得好喘……", "下次再玩！"],
+    "tease": ["抓到你了！", "嘿！", "別跑！"], "climb": ["嘿咻！", "上去看看～", "爬上去看看～", "上面風景比較好！"], "ride": ["哇——！", "晃、晃得好厲害！"],
+    "fall": ["哇啊——掉下去了！", "地板不見了！", "哇啊！踩空了！", "咦咦咦——"], "found": ["被找到了！", "嗚，好快！", "你怎麼知道我在這裡？", "你眼睛好利喔！", "可惡，被找到了～"],
+    "hs_count": ["我數到五喔～\n1、2、3、4、5！好了沒？"], "trip": ["哎呀！", "痛痛……", "跌倒了……", "哎唷……", "平地也會跌倒……"],
     "pat_friend": ["乖～摸摸", "今天也辛苦了", "摸摸頭～"],
-    "visit": ["找到你了！", "在做什麼呀？", "嗨～", "（抬頭看你）"],
+    "visit": ["找到你了！", "在做什麼呀？", "嗨～", "（抬頭看你）", "你在忙嗎？", "我來看看你～", "嘿嘿，跑過來了"],
     "cling": ["陪我玩嘛～", "理我一下嘛～", "（拉拉你的袖子）"], "cling_got": ["抓到你了～摸摸我嘛", "嘿嘿～"],
     "cling_abort": ["哼～", "小氣……"], "candy_win": ["答對了！這顆給你 🍬", "猜中了～好厲害"],
     "candy_lose": ["猜錯囉～是這隻手！", "嘿嘿，在這裡～"], "joke_after": ["……好笑嗎？", "（等你笑）"],
@@ -241,54 +243,54 @@ GENERIC = {
     "birthday": ["生日快樂！🎂", "祝你生日快樂～今天是你的日子！"],
     "todo_remind": ["「{t}」時間到了喔！", "提醒你：「{t}」時間到了！"],
     "todo_soon": ["「{t}」還剩 {m} 喔！", "提醒一下，「{t}」再 {m} 就到了～"], "todo_done": ["好棒！完成了！", "辛苦了～", "又完成一件！"],
-    "want_food": ["給我的嗎？", "好香～", "（盯——）"], "want_toy": ["要玩嗎？", "丟給我！"],
+    "want_food": ["給我的嗎？", "好香～", "（盯——）", "那個……可以給我嗎？", "聞起來好香～"], "want_toy": ["要玩嗎？", "丟給我！"],
     "snatch": ["搶到了！", "嘿嘿，是我的了"], "food_forgive": ["……看在食物的份上，原諒你", "好吧，不氣了"],
     "food_wake": ["好香……！", "（聞聞）有吃的？"],
     "mis_pat": ["摸我嘛～", "（把你的手拉到頭上）"], "mis_poke": ["嘿嘿，戳戳～", "（自己戳自己的臉）"],
     "mis_eat": ["啊嗚——！"], "mis_chew": ["（嚼嚼）", "（嚼嚼嚼）"], "mis_spit": ["呸！不好吃！", "呸呸！是塑膠的味道！"],
     "mis_carry": ["我搶到了～", "抓不到我～"], "mis_return": ["還你～", "好啦，還給你"],
-    "full": ["吃不下了……", "好飽……肚子要撐破了", "等一下再吃好不好"],
+    "full": ["吃不下了……", "好飽……肚子要撐破了", "等一下再吃好不好", "真的吃不下了……", "肚子圓滾滾了"],
     "shoot": ["投籃！", "看我的～", "嘿咻！"], "kick_goal": ["射門！", "接招！", "看我的～"],
     "score": ["進球了！", "耶～得分！", "我好厲害！", "漂亮！", "看到沒～進了！", "嘿嘿，很準吧！", "我是天才！", "再來一球！"],
     "miss": ["沒進……", "可惜！", "差一點點！", "嗚……手滑了", "剛剛那球不算！", "哼，一定是球的問題", "再一次嘛……", "怎麼會……"],
-    "queue": ["排隊排隊～", "快一點啦～", "換我了嗎？", "（踮腳看）"],
-    "slide_invite": ["一起溜滑梯！", "大家來溜滑梯～", "誰要一起玩？"],
-    "me_too": ["我也要！", "等我～", "我也要玩！"],
-    "duel_start": ["來鬥牛！", "跟我比投籃！", "一對一，來！"],
-    "duel_accept": ["好啊！", "誰怕誰！", "來就來！"],
-    "block": ["蓋你火鍋！", "擋下來了！", "沒那麼簡單～"],
-    "blocked": ["啊！被蓋了！", "可惡……", "再一次！"],
-    "duel_win": ["我贏了！", "嘿嘿，我比較厲害～", "勝利！"],
-    "duel_lose": ["下次再來！", "哼，讓你的啦", "不服！再一場！"],
+    "queue": ["排隊排隊～", "快一點啦～", "換我了嗎？", "（踮腳看）", "前面的快一點～", "下一個是我嗎？", "排隊要守規矩喔", "（原地小跳步）"],
+    "slide_invite": ["一起溜滑梯！", "大家來溜滑梯～", "誰要一起玩？", "溜滑梯好好玩，一起來！", "誰最後一個溜誰請客！"],
+    "me_too": ["我也要！", "等我～", "我也要玩！", "算我一個！", "帶我去！", "好啊好啊！"],
+    "duel_start": ["來鬥牛！", "跟我比投籃！", "一對一，來！", "三球決勝負！", "輸的人請吃點心！", "敢不敢跟我單挑？"],
+    "duel_accept": ["好啊！", "誰怕誰！", "來就來！", "我不會輸的！", "放馬過來！", "好！認真比！"],
+    "block": ["蓋你火鍋！", "擋下來了！", "沒那麼簡單～", "這球我的！", "想得美～", "蓋！"],
+    "blocked": ["啊！被蓋了！", "可惡……", "再一次！", "怎麼跳那麼高……", "被看穿了！", "哼，運氣好而已"],
+    "duel_win": ["我贏了！", "嘿嘿，我比較厲害～", "勝利！", "承讓承讓～", "要請我吃點心喔！"],
+    "duel_lose": ["下次再來！", "哼，讓你的啦", "不服！再一場！", "再一場！這次不算！", "可惡，好不甘心……"],
     "duel_tie": ["平手～", "不分上下耶！"],
-    "pk_start": ["我來當守門員！", "看你踢不踢得進！"],
-    "pk_save": ["擋下來了！", "休想進球！", "守住了～"],
-    "pk_saved": ["被擋了……", "哇，好厲害", "可惡！"],
-    "pk_goal_keeper": ["啊！沒擋到……", "太快了啦！"],
+    "pk_start": ["我來當守門員！", "看你踢不踢得進！", "守門員交給我！", "一球都不會讓你進！", "來吧，我準備好了！"],
+    "pk_save": ["擋下來了！", "休想進球！", "守住了～", "神撲！", "沒那麼容易！", "這球我看透了！"],
+    "pk_saved": ["被擋了……", "哇，好厲害", "可惡！", "居然擋下來了……", "下一球一定進！", "守門員好強……"],
+    "pk_goal_keeper": ["啊！沒擋到……", "太快了啦！", "方向猜錯了……", "嗚，撲空了", "好刁鑽的角度！"],
     "user_score": ["你進了！", "好球！", "哇～好厲害！", "漂亮！"],
     "user_miss": ["差一點點！", "可惜～", "再一次！"],
     "swing_start": ["盪鞦韆～", "推我一下嘛～", "出發！"],
     "swing_top": ["好高～！", "飛起來了～", "呀呼～！", "看我盪到天上去！"],
-    "seesaw": ["上～", "下～", "哇～", "換你了！", "嘿咻！"],
-    "seesaw_invite": ["誰要跟我玩蹺蹺板？", "來嘛～一個人玩不起來啦"],
-    "seesaw_alone": ["一個人玩不起來……", "都沒有人要陪我玩……"],
+    "seesaw": ["上～", "下～", "哇～", "換你了！", "嘿咻！", "上去囉～", "換我下來～", "咚！", "好高～"],
+    "seesaw_invite": ["誰要跟我玩蹺蹺板？", "來嘛～一個人玩不起來啦", "蹺蹺板要兩個人才好玩～", "來陪我玩嘛～"],
+    "seesaw_alone": ["一個人玩不起來……", "都沒有人要陪我玩……", "一個人好無聊……", "那我先去玩別的好了……"],
     "tramp": ["彈彈彈～", "好好玩！", "跳～跳～"],
-    "tramp_flip": ["翻跟斗～！", "看我的！", "後空翻！"],
-    "music": ["這首好好聽～", "♪～♪～", "（跟著哼）", "再一首！", "好想跳舞～"],
+    "tramp_flip": ["翻跟斗～！", "看我的！", "後空翻！", "空中轉體！", "看我翻一圈～", "十分！"],
+    "music": ["這首好好聽～", "♪～♪～", "（跟著哼）", "再一首！", "好想跳舞～", "跟著節奏搖～", "這首我會唱！", "音樂好棒～"],
     "dj_start": ["我來放音樂！🎧", "今天由我當 DJ～", "想聽什麼？我來放！", "交給我吧～♪"],
     "music_new": ["🎵 {t}", "下一首是「{t}」～", "🎵 {t}！我喜歡這首"],
-    "push": ["推～", "飛高高～", "再高一點！", "嘿咻！"],
-    "push_end": ["換我盪！", "好玩嗎？", "下次換你推我～"],
-    "bonk": ["哎呀！", "好痛！誰丟的？", "嚇我一跳……", "球、球砸到我了！"],
-    "cheer_up": ["沒關係～", "下次一定進！", "加油加油！", "差一點點而已！"],
+    "push": ["推～", "飛高高～", "再高一點！", "嘿咻！", "用力推囉～", "準備——推！", "盪到天上去！"],
+    "push_end": ["換我盪！", "好玩嗎？", "下次換你推我～", "推得好累……換我玩", "好玩吧？嘿嘿"],
+    "bonk": ["哎呀！", "好痛！誰丟的？", "嚇我一跳……", "球、球砸到我了！", "誰丟的球啦！", "頭上長包了……"],
+    "cheer_up": ["沒關係～", "下次一定進！", "加油加油！", "差一點點而已！", "沒事沒事，下一球！", "你可以的！"],
     "miss_kick": ["沒進……", "踢歪了！", "腳滑了啦……", "剛剛那球不算！", "哼，一定是球的問題", "再一次嘛……"],
     "drink": ["好喝～", "（咕嚕咕嚕）", "謝謝你～好好喝"],
     "sulk_drink": ["……好喝。（但還在生氣）", "哼……（一邊喝一邊瞪你）"],
     "full_drink": ["喝不下了……", "肚子裡都是水了啦……"],
-    "hoop_peek": ["（偷偷看……）", "嘿嘿，你看不到我～", "……（躲好）", "我藏得很好吧？"],
-    "hoop_found": ["被發現了！", "咦？你看到我了？", "嘻嘻～被抓到了", "哇！"],
-    "cheer": ["好球！", "好厲害！", "耶～"], "slide": ["咻——！", "好好玩～", "再一次！"],
-    "climb_up": ["爬上去～", "嘿咻、嘿咻"], "top": ["好高喔！", "我在最上面！"],
+    "hoop_peek": ["（偷偷看……）", "嘿嘿，你看不到我～", "……（躲好）", "我藏得很好吧？", "噓……我在躲貓貓", "（從柱子後面偷看）", "你找不到我～"],
+    "hoop_found": ["被發現了！", "咦？你看到我了？", "嘻嘻～被抓到了", "哇！", "怎麼被發現了！", "藏得不夠好嗎……", "嘿嘿，被抓到了"],
+    "cheer": ["好球！", "好厲害！", "耶～", "好棒！", "太厲害了吧！", "再一球！"], "slide": ["咻——！", "好好玩～", "再一次！", "呀呼——！", "好刺激！"],
+    "climb_up": ["爬上去～", "嘿咻、嘿咻", "一步、兩步……", "梯子好高喔"], "top": ["好高喔！", "我在最上面！", "到頂了！", "準備溜下去囉～"],
     "sulk_ignore": ["哼。", "……（不理你）", "（背對你）"], "sulk_food": ["……好吃。（但還在生氣）", "哼……（一邊吃一邊瞪你）"],
     "no_play": ["……不想玩。", "哼，不要。"], "yarn": ["喵！毛線球！", "喵喵喵！"],
     "fly": ["飛高高～！", "哇——好高！", "咻——！"], "fly_top": ["好高！看得好遠～", "哇，雲在旁邊！"],
@@ -978,12 +980,18 @@ class Text:
         return sum(d.textlength(c, font=self.pick(c, size)[0]) for c in s if c not in "️‍")
 
     def draw(self, d, xy, s, size, fill, anchor="la"):
+        # 不同字型的上緣高度不一樣，各自用 "la" 對齊會高低不齊（例如 ✿、🎧 會往下掉）；
+        # 所以統一換算成粉圓體的基線，每個字都貼在同一條基線上
         x, y = xy
+        asc, desc = self.font(0, size).getmetrics()
+        v = anchor[1]
+        base = y + (asc if v == "a" else (asc - desc) / 2 if v == "m" else -desc if v == "d" else 0)
+        anchor = anchor[0] + "s"
         for c in s:
             if c in "️‍":
                 continue
             f, emoji = self.pick(c, size)
-            d.text((x, y), c, font=f, fill=fill, embedded_color=emoji, anchor=anchor)
+            d.text((x, base), c, font=f, fill=fill, embedded_color=emoji, anchor=anchor)
             x += d.textlength(c, font=f)
 
     def emoji_image(self, ch, size):
@@ -1027,7 +1035,7 @@ class Character:
         if im is None:
             src = Image.open(path).convert("RGBA")
             k = h / SPRITE_REF_H                         # 每張都用同一個比例尺，躺著的、撐傘的才不會被壓扁拉長
-            im = src.resize((max(1, round(src.width * k)), h), Image.LANCZOS)
+            im = src.resize((max(1, round(src.width * k)), max(1, round(src.height * k))), Image.LANCZOS)
             self.cache[key] = im
         return im
 
@@ -2137,7 +2145,13 @@ class Pet:
         self.last_touch = time.time()
 
     def free(self):
-        return self.state in ("idle", "walk") and not self.sulking and not self.follow
+        """閒著、可以被找去做別的事。正在走去玩器材、排隊、幫忙推鞦韆的不算（不然半路會被拉去聊天、摸頭，器材就不去了）。"""
+        return self.state in ("idle", "walk") and not self.sulking and not self.follow and not self.going()
+
+    def going(self):
+        return bool(getattr(self, "slide_going", False) or getattr(self, "peek_going", False)
+                    or getattr(self, "equip_going", None) or getattr(self, "queued", False)
+                    or getattr(self, "pushing", None) is not None)
 
     def set_pose(self, pose, variant=None):
         if self.card_lock:
@@ -2160,6 +2174,7 @@ class Pet:
             return
         self.state = "act"
         self.target = None
+        self.clear_going()
         self.set_pose(pose)
         self.t = 0
         self.act_left = int(secs * FPS)
@@ -2167,7 +2182,13 @@ class Pet:
         if line:
             self.say(line, force=force)
 
+    def clear_going(self):
+        """「正在走去玩器材」的記號：被叫去做別的事就要清掉，不然器材、排隊會一直以為她還在路上。"""
+        self.slide_going = self.peek_going = False
+        self.equip_going = None
+
     def idle(self):
+        self.clear_going()
         if self.world.study and not self.giant and self.state not in ("drag", "air", "leaving"):
             self.walk_to = None
             self.target = None
@@ -2178,6 +2199,8 @@ class Pet:
         self.set_pose("idle", 0)
 
     def go_to(self, x, speed=1.8, state="walk"):
+        self.clear_going()                     # 換了新的目的地：原本要去玩的器材、幫忙推鞦韆就不算了
+        self.pushing = None
         if self.plat and state != "walk":
             self.to_ground()
         self.walk_to = max(self.L + 60, min(self.R - 60, x))
@@ -2303,6 +2326,16 @@ class Pet:
         w = self.world
         self.t += 1
         s = self.state
+        prev, self.prev_state = getattr(self, "prev_state", s), s
+        if prev in PLAY_STATES and s != prev:
+            self.left_play(prev)
+        if prev == "stack" and s not in ("stack", "air", "drag"):          # 在別人頭上被叫去做別的事
+            self.on = None
+            self.stack_ang = 0
+        if s in ("idle", "walk", "chase") and not self.plat and not self.giant and self.y < self.floor - 3:
+            self.on = None                               # 保險：在地上的狀態卻懸在半空中（例如從頭上被叫走）→ 掉下來
+            self.fall(line=False)
+            s = self.state
         if s != "drag":
             self.anger = max(0.0, self.anger - (SULK_DECAY if self.sulking else ANGER_DECAY) / FPS)
         if self.belly:
@@ -2390,6 +2423,38 @@ class Pet:
         if self.dirty:
             self.render()
             self.dirty = False
+
+    def left_play(self, old):
+        """剛離開器材（玩完、被叫去做別的事、器材被收起來、被拎走都算）：把玩器材留下來的東西清乾淨，
+        不然會浮在半空中、身體歪一邊、還佔著器材。"""
+        w = self.world
+        s = self.state
+        if s in PLAY_STATES:                             # 只是換到同一個器材的下一段（爬梯子 → 溜下來）
+            return
+        self.swing_ang = 0
+        if s not in ("air", "drag"):
+            self.theta = 0.0
+            self.tramp_spin = 0.0
+        if old in ("ladder", "slide_top", "slide"):
+            self.slide_eq = None
+        q = getattr(self, "pusher", None)
+        if q is not None:                                # 幫我推鞦韆的那隻：不用推了
+            self.pusher = None
+            if getattr(q, "pushing", None) is self:
+                q.pushing = None
+        if old == "hoop_peek" and s != "edge":
+            self.edge = None
+        if s not in ("air", "drag", "stack", "edge", "hide", "leaving") and not self.plat and not self.giant:
+            self.y = self.floor
+        if self.pose == "swing" and s in ("idle", "walk", "chase", "study", "sleep"):
+            self.set_pose("idle", 0)
+        for kind in ("swing", "seesaw", "tramp"):
+            e = w.equip.get(kind)
+            if e and (e.busy is self or (isinstance(e.busy, list) and self in e.busy)):
+                w.release(e, self)
+                for o in (e.busy if isinstance(e.busy, list) else []):
+                    o.see_wait = 0
+        self.dirty = True
 
     def half_step(self):
         """60 fps 的中間格：沿著速度方向挪一半，不重畫。"""
@@ -2610,7 +2675,7 @@ class Pet:
         else:
             self.x = max(self.L + 60, min(self.x, self.R - 60))
         self.dirty = True
-        if self.state == "walk" and not self.follow and random.random() < 1 / 2500:
+        if self.state == "walk" and not self.follow and not self.going() and random.random() < 1 / 2500:   # 要去玩器材的路上不跌倒（跌倒會忘記要去哪）
             self.act("dizzy" if self.char.has("dizzy") else "oops", 1.8, "trip")
 
     # 吊著的幾何：支點＝抓的地方，重心＝身體中間偏下
@@ -2998,6 +3063,10 @@ class Pet:
             bx, by, vx, vy, t = self.x, self.y - sh / 2, 0.0, -sh * .32, self.theta
         elif self.state == "stack":
             bx, by, vx, vy, t = self.x, self.y, 0.0, -sh * .82, math.radians(getattr(self, "stack_ang", 0))
+        elif self.state in ("idle", "walk", "chase", "act", "sulk", "study", "sleep", "tag", "race"):
+            # 站在地上：跟著我畫面上的晃動（走路一搖一擺、跳一跳），上面的人才會一起晃，不會僵在那裡
+            dx, dy, a = self.motion()
+            bx, by, vx, vy, t = self.x, self.y, dx, dy - sh * .82, math.radians(a)
         else:
             return self.x, self.y - sh * .82, 0.0
         rx, ry = vx * math.cos(t) + vy * math.sin(t), -vx * math.sin(t) + vy * math.cos(t)
@@ -3481,14 +3550,16 @@ class Pet:
                     m = e.dims()
                     rest_x = e.P3(0, m["sv"], 0)[0]
                     side = -1 if q.x < rest_x else 1
-                    self.pusher, q.pushing = q, self
                     q.push_spot = rest_x + side * w.sprite_h * .62
                     q.push_side = side
                     q.go_to(q.push_spot, 2.6)
                     q.then = None
+                    self.pusher, q.pushing = q, self
             return
-        if w.pets.get(q.base_id) is not q or getattr(q, "pushing", None) is not self or q.state not in ("idle", "walk", "act"):
+        if w.pets.get(q.base_id) is not q or getattr(q, "pushing", None) is not self or q.state not in ("idle", "walk", "act")                 or (q.state == "idle" and abs(q.x - q.push_spot) > 40):        # 被叫去別的地方了：不推了
             self.pusher = None
+            if getattr(q, "pushing", None) is self:
+                q.pushing = None
             return
         k = int((T - .6) / 2.4)                           # 每一個來回推一次（盪到她那一邊、回頭的時候）
         if q.state == "idle" and abs(q.x - q.push_spot) < 12 and k != getattr(self, "push_k", -1) and ang * q.push_side > .1:
@@ -4042,7 +4113,33 @@ class World:
                 "giant_bg": 0, "giant_rest_bg": 60,
                 "out": ["claude", "deepseek"], "outfits": {}, "pos": {}, "love": {}, "meals_done": ""}
         base.update(s)
+        self.upgrade_topics(base)
         return base
+
+    def upgrade_topics(self, s):
+        """新版本多了預設話題：改過話題的人（設定裡有自己的一份）也要拿得到新的句子和新的類別。只在升級的時候做一次。"""
+        if s.get("topics_ver", 1) >= TOPICS_VER:
+            return
+        s["topics_ver"] = TOPICS_VER
+        mine = s.get("topics")
+        if not mine:
+            if "日常" not in s.get("topic_on", []):
+                s.setdefault("topic_on", []).insert(0, "日常")
+            return
+        try:
+            defaults = json.loads((CHAR_DIR / "topics.json").read_text(encoding="utf-8"))
+        except Exception:
+            return
+        merged = {}
+        for cat, lines in defaults.items():          # 新的類別照預設的順序排在前面
+            if cat not in mine:
+                merged[cat] = list(lines)
+        for cat, lines in mine.items():
+            merged[cat] = list(lines) + [l for l in defaults.get(cat, []) if l not in lines
+                                         and not l.startswith("（這一類是給你自己填的")]
+        s["topics"] = merged
+        if "日常" not in s.get("topic_on", []):
+            s.setdefault("topic_on", []).insert(0, "日常")
 
     def save(self):
         s = self.settings
@@ -4646,7 +4743,8 @@ class World:
         return bool((self.duel and p in self.duel["pets"]) or (self.pk and p in (self.pk["kicker"], self.pk["goalie"])))
 
     def match_partner(self, p):
-        cands = [q for q in self.pets.values() if q is not p and q.free() and not q.plat and not q.giant
+        cands = [q for q in self.pets.values() if q is not p and not q.plat and not q.giant
+                 and (q.free() or (q.state == "chase" and not q.sulking and not q.follow and not self.in_match(q)))   # 在追球的也可以找來一起玩
                  and not getattr(q, "queued", False) and abs(q.x - p.x) < 1100]
         return min(cands, key=lambda q: abs(q.x - p.x)) if cands else None
 
@@ -4711,12 +4809,35 @@ class World:
                 or "hoop" not in self.equip
             if gone or self.tick > d["end"] or max(d["score"].values()) >= 3 or d["shots"] >= 12:
                 self.end_duel(quiet=gone)
+                if gone:
+                    self.match_gone(d["pets"], d["ball"], "hoop")
         k = self.pk
         if k:
             gone = any(self.pets.get(q.base_id) is not q or q.giant for q in (k["kicker"], k["goalie"])) \
                 or not k["ball"].alive or "goal" not in self.equip
             if gone or self.tick > k["end"] or (k["kicks"] >= 5 and not getattr(k["ball"], "shooter", None)):
                 self.end_pk(quiet=gone)
+                if gone:
+                    self.match_gone((k["kicker"], k["goalie"]), k["ball"], "goal")
+
+    def match_gone(self, ps, ball, kind):
+        """比賽到一半，球或器材被收走了：說一聲，大家回到平常的樣子（之後丟新的球、擺回器材還可以再比）。"""
+        ps = [q for q in ps if self.pets.get(q.base_id) is q and not q.giant]
+        for q in ps:
+            if q.state != "air":                         # 撲到一半的守門員落地時會自己轉回來
+                q.mirror = False
+            if q.state == "chase":
+                q.idle()
+        talk =[q for q in ps if q.state in ("idle", "walk", "act")]
+        if not talk:
+            return
+        if not ball.alive:
+            line = random.choice(["咦？球不見了！", "球被收走了啦……", "比賽暫停～球呢？"])
+        elif kind not in self.equip:
+            line = random.choice(["籃框不見了！" if kind == "hoop" else "球門不見了！", "那……今天就比到這裡吧", "咦？要收了嗎？"])
+        else:
+            return
+        talk[0].say(text=line, force=True)
 
     def end_duel(self, quiet=False):
         d, self.duel = self.duel, None
@@ -5164,8 +5285,8 @@ class World:
 
     def walk_to_ladder(self, p):
         g = self.equip["slide"].geom()
-        p.slide_going = True
         p.go_to(g["foot"][0], 2.2)
+        p.slide_going = True
         p.then = lambda: self.start_ladder(p)
 
     def queue_spot(self, p):
@@ -5327,9 +5448,12 @@ class World:
         return False
 
     def go_equip_spot(self, p, kind, x, then):
+        for k, e in self.equip.items():                   # 原本要去（或正在玩）別的器材：先讓出來
+            if k != kind and (e.busy is p or (isinstance(e.busy, list) and p in e.busy)):
+                self.release(e, p)
         p.to_ground()
-        p.equip_going = kind
         p.go_to(x, 2.3)
+        p.equip_going = kind
 
         def arrive():
             p.equip_going = None
@@ -5436,7 +5560,8 @@ class World:
                     or (kind in want and q.state == want[kind])
                     or (kind == "seesaw" and q.state == "seesaw"))
                 if not ok:
-                    q.equip_going = None
+                    if getattr(q, "equip_going", None) == kind:     # 改去玩別的器材的，不要把她新的行程也取消掉
+                        q.equip_going = None
                     if kind == "seesaw":
                         self.release(e, q)
                         for o in (e.busy or []):
@@ -5452,9 +5577,9 @@ class World:
         if not hoop or self.hoop_peeker():
             return False
         p.peek_side = random.choice((-1, 1))
-        p.peek_going = True
         p.to_ground()
         p.go_to(hoop.geom()["pole"] + p.peek_side * self.sprite_h * .2, 2.0)
+        p.peek_going = True
 
         def start():
             p.peek_going = False
@@ -6075,7 +6200,7 @@ class World:
 
     # ---------- 鬼抓人 ----------
     def start_tag(self):
-        ps = [p for p in self.pets.values() if p.state in ("idle", "walk", "act", "sleep") and not p.giant]
+        ps = [p for p in self.pets.values() if p.state in ("idle", "walk", "act", "sleep") and not p.giant and not p.going()]
         if len(ps) < 2:
             if ps:
                 ps[0].say(text="要兩隻以上才能玩喔～", force=True)
@@ -6578,7 +6703,7 @@ class World:
             a.go_to(b.x + (100 if a.x > b.x else -100), 2.2)
 
             def arrive(a=a, b=b):
-                if b.state in ("idle", "walk", "act"):
+                if b.state in ("idle", "walk", "act") and not b.going():
                     a.act("happy", 2.5, "pat_friend")
                     b.burst("heart", 4)
                     b.act("pat", 2.8, "pat")
@@ -7725,7 +7850,8 @@ class MusicPlayer:
             d.ellipse((x - r, y - r, x + r, y + r), fill=(255, 255, 255, 170))
         for x, y, s, ch in ((40, 60, 20, "♪"), (352, 236, 18, "♫"), (60, 228, 14, "♪"), (330, 96, 13, "♩")):
             d.text((x, y), ch, font=TEXT.font(1, s), fill=th["note"] + (200,), anchor="mm")
-        TEXT.draw(d, (14, 12), f"🎧 DJ {self.w.disp_name(self.cid)}", 13, th["acc_d"] + (230,))
+        d.text((14, 11), "🎧", font=TEXT.font(1, 12), fill=th["acc_d"] + (230,))       # 耳機圖示比字大一點、偏低，縮小並上移才會跟字對齊
+        TEXT.draw(d, (33, 12), f"DJ {self.w.disp_name(self.cid)}", 13, th["acc_d"] + (230,))
         cv.create_image(0, 0, image=self.tkimg("bg", bg), anchor="nw")
         sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))                # 唱片底下的影子
         cx, cy, R = self.REC
