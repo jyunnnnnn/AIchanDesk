@@ -19,6 +19,7 @@ import ctypes
 import datetime
 import json
 import math
+from icons import COIN, CAPSULE, TROPHY, LOCK, NOICON, ICON_CHARS, MONO, SKIP, icon_pil
 import random
 import re
 import subprocess
@@ -102,10 +103,10 @@ POSE_NAMES = dict(ACTION_NAMES, **{
     "busy_left": "往左看", "busy_right": "往右看", "swamped_left": "忙翻了（左）", "swamped_right": "忙翻了（右）",
     "reset_bell": "敲鐘宣布", "reset_check": "查手機", "reset_hope": "期待", "reset_maybe": "也許吧", "reset_nope": "沒消息",
 })
-ITEMS = {   # 名稱: (emoji, 種類)；只用 Windows 10 內建 emoji 字型有的字
-    "飯糰": ("🍙", "food"), "白飯": ("🍚", "food"), "蛋糕": ("🍰", "food"), "糰子": ("🍡", "food"),
-    "甜甜圈": ("🍩", "food"), "草莓": ("🍓", "food"), "香蕉": ("🍌", "food"), "飲料": ("🥤", "food"),
-    "熱茶": ("🍵", "food"), "足球": ("⚽", "toy"), "籃球": ("🏀", "toy"), "毛線球": ("🧶", "toy"),
+ITEMS = {   # 名稱: (圖的名稱, 種類)；圖是自己畫的（icons.py），名稱就是圖的名稱
+    "飯糰": ("飯糰", "food"), "白飯": ("白飯", "food"), "蛋糕": ("蛋糕", "food"), "糰子": ("糰子", "food"),
+    "甜甜圈": ("甜甜圈", "food"), "草莓": ("草莓", "food"), "香蕉": ("香蕉", "food"), "飲料": ("飲料", "food"),
+    "熱茶": ("熱茶", "food"), "足球": ("足球", "toy"), "籃球": ("籃球", "toy"), "毛線球": ("毛線球", "toy"),
 }
 DRINKS = {"飲料", "熱茶"}          # 喝的：說「好喝」、不擺吃飯的姿勢
 RPS = {"剪刀": "✌️", "石頭": "✊", "布": "✋"}
@@ -147,6 +148,13 @@ RARITY_COLOR = {"N": "#9a8a80", "R": "#4a8fd6", "SR": "#b05bd6", "SSR": "#e0a020
 
 # 遊樂器材和生活動作用的姿勢（坐、撲、躺……）：只在那些情境出現，不當卡片、不放「做個動作」
 ACTION_POSES = {"swing", "dive"}
+# 金幣：陪她們、摸摸、玩、餵食都會賺，賺很容易；抽卡（扭蛋）一次要花一點
+COIN_START = 60            # 第一次用就先給一些，馬上可以扭一次
+GACHA_COST = 30            # 扭蛋一次
+GACHA_REFUND = 10          # 抽到重複的卡，退回一點金幣
+COIN_PAY_EVERY = 300       # 陪伴獎勵：每幾秒一次（每隻在場的小可愛 +2）
+COIN_REWARD = {"pat": 2, "feed": 3, "game": 3, "hug": 3, "photo": 3, "found": 3, "study": 30, "swing": 3, "slide": 3,
+               "tramp": 3, "seesaw": 4, "shoot": 1, "score": 3, "save": 2, "duel": 6, "pk": 6, "user_score": 3, "fly": 1}
 TOPICS_VER = 2             # 預設話題（characters/topics.json）的版本：加了新句子就 +1，舊使用者升級時會補進去
 PLAY_STATES = ("swing", "seesaw", "tramp", "ladder", "slide_top", "slide", "hoop_peek")   # 正在玩器材的狀態
 SPRITE_REF_H = 640         # 立繪的比例尺：站著的角色是 640px 高；躺著、撲球的圖可以比較寬、撐傘的可以比較高
@@ -208,7 +216,7 @@ ACHIEVEMENTS = [
 SHOT_SPREAD = 1.75           # 投籃的誤差（籃框半徑的幾倍）：大約七成會進
 KICK_VY = ((2, 8, 1.0), (9, 14, 1.0), (15, 20, 1.0), (22, 30, 1.0))    # 射門的高度（最低, 最高, 機率權重）：大約七成會進
 
-APP_VERSION = "1.3.1"                 # 發新版時跟 Release 的 tag 一起改
+APP_VERSION = "1.4.0"                 # 發新版時跟 Release 的 tag 一起改
 RELEASE_API = "https://api.github.com/repos/jyunnnnnn/AIchanDesk/releases/latest"
 RELEASE_PAGE = "https://github.com/jyunnnnnn/AIchanDesk/releases/latest"
 
@@ -932,6 +940,61 @@ def idle_seconds():
 
 
 # ---------------------------------------------------------------- 文字（缺字自動換字型）
+# ---------------------------------------------------------------- 小圖示
+# 介面裡所有小圖示都是自己畫的（見 icons.py），不用 emoji 或文字符號。
+# 文字裡寫 ♪ ✓ 🎧 或 COIN 這種字元，畫對話泡泡時會自動換成圖；Tk 的標籤、按鈕、選單用 set_icon_text。
+def icon_tk(name, size, color=None):
+    from PIL import ImageTk
+    key = ("tk", name, size, color)
+    if key not in _TK_ICONS:
+        _TK_ICONS[key] = ImageTk.PhotoImage(icon_pil(name, size, color))
+    return _TK_ICONS[key]
+
+
+_TK_ICONS = {}
+
+
+def set_icon_text(widget, text, size=16, color=None):
+    """標籤、按鈕的文字開頭（或結尾）如果是圖示字元，就換成畫好的小圖放在文字旁邊；單色圖示用文字的顏色。"""
+    text = "".join(ch for ch in text if ch not in SKIP)
+    lead, trail = text[:1] in ICON_CHARS, len(text) > 1 and text[-1:] in ICON_CHARS
+    if not (lead or trail):
+        widget.config(image="", text=text)
+        return
+    name = ICON_CHARS[text[0] if lead else text[-1]]
+    if color is None and name in MONO:
+        try:
+            color = widget.cget("fg")
+        except tk.TclError:
+            color = None
+    img = icon_tk(name, size, color)
+    if lead:
+        widget.config(image=img, compound="left", text=(" " + text[1:].lstrip()) if text[1:].strip() else "")
+    else:
+        widget.config(image=img, compound="right", text=text[:-1].rstrip() + " ")
+
+
+def plain_text(text):
+    """視窗標題這種一定是純文字的地方：把圖示字元拿掉。"""
+    return "".join(ch for ch in text if ch not in SKIP and ch not in ICON_CHARS).strip()
+
+
+def canvas_icon_text(cv, x, y, text, font, fill, size=14, anchor="w"):
+    """畫布上的「圖示＋文字」：開頭是圖示字元就先貼圖。回傳畫出來的東西的編號。"""
+    if text and text[0] in ICON_CHARS:
+        name = ICON_CHARS[text[0]]
+        img = icon_tk(name, size, fill if name in MONO else None)
+        return [cv.create_image(x, y, image=img, anchor="w"),
+                cv.create_text(x + size + 4, y, text=text[1:].lstrip(), font=font, fill=fill, anchor=anchor)]
+    return [cv.create_text(x, y, text=text, font=font, fill=fill, anchor=anchor)]
+
+
+def fade_icon(im, alpha):
+    im = im.copy()
+    im.putalpha(im.getchannel("A").point(lambda v: v * alpha // 255))
+    return im
+
+
 class Text:
     # 0 粉圓體（圓圓的、可愛）、1 符號、2 彩色 emoji、3 微軟正黑體（粉圓體沒有的字）、4 韓文
     CHAINS = ((str(BASE / "fonts" / "jf-openhuninn-2.1.ttf"), "msjh.ttc", "arial.ttf"), ("seguisym.ttf",), ("seguiemj.ttf",),
@@ -977,7 +1040,8 @@ class Text:
         return self.font(idx, size), idx == 2
 
     def width(self, d, s, size):
-        return sum(d.textlength(c, font=self.pick(c, size)[0]) for c in s if c not in "️‍")
+        return sum(int(size * 1.15) + size * .12 if c in ICON_CHARS else d.textlength(c, font=self.pick(c, size)[0])
+                   for c in s if c not in SKIP)
 
     def draw(self, d, xy, s, size, fill, anchor="la"):
         # 不同字型的上緣高度不一樣，各自用 "la" 對齊會高低不齊（例如 ✿、🎧 會往下掉）；
@@ -988,17 +1052,23 @@ class Text:
         base = y + (asc if v == "a" else (asc - desc) / 2 if v == "m" else -desc if v == "d" else 0)
         anchor = anchor[0] + "s"
         for c in s:
-            if c in "️‍":
+            if c in SKIP:
+                continue
+            if c in ICON_CHARS:                                       # 小圖示：貼畫好的圖，不是文字
+                isz = int(size * 1.15)
+                name = ICON_CHARS[c]
+                im = icon_pil(name, isz, tuple(fill[:3]) if name in MONO else None)
+                if len(fill) == 4 and fill[3] < 255:
+                    im = fade_icon(im, fill[3])
+                try:
+                    d._image.alpha_composite(im, (int(x), int(base - size * .36 - isz / 2)))
+                except (ValueError, AttributeError):
+                    pass
+                x += isz + size * .12
                 continue
             f, emoji = self.pick(c, size)
             d.text((x, base), c, font=f, fill=fill, embedded_color=emoji, anchor=anchor)
             x += d.textlength(c, font=f)
-
-    def emoji_image(self, ch, size):
-        f = self.font(2, size)
-        im = Image.new("RGBA", (size * 2, size * 2), (0, 0, 0, 0))
-        ImageDraw.Draw(im).text((size // 2, size // 2), ch, font=f, embedded_color=True)
-        return im.crop(im.getbbox())
 
 
 TEXT = Text()
@@ -1072,7 +1142,7 @@ class Item:
     def set_scale(self):
         """跟著小可愛的尺寸縮放（「中」＝44px）。"""
         size = max(30, round(44 * self.world.sprite_h / SIZES["中"]))
-        self.img = TEXT.emoji_image(self.emoji, size)
+        self.img = icon_pil(self.emoji, size)
         self.half = size / 2                              # 球心在底部往上 half 的地方
         self.S = size * 2 + 2
 
@@ -2089,6 +2159,8 @@ class Pet:
         self.stack_until = 0
         self.tease_n = 0
         self.last_cur = (0, 0)
+        self.stroke = None               # 滑鼠在她身上來回晃的紀錄（摸摸）
+        self.stroke_cd = 0
         self.hide_kind = None
         self.jealous_until = 0
         self.tag_pause = 0
@@ -3154,13 +3226,23 @@ class Pet:
         self.dirty = True
 
     # ---------- 逗貓棒 ----------
+    def opaque_top(self):
+        """圖裡最上面有顏色的那一列（頭頂）：圖上面常常留一點透明的邊。"""
+        img = self.current_image()
+        c = getattr(self, "_otop", None)
+        if c is None or c[0] is not img:
+            bb = img.getchannel("A").getbbox()
+            c = self._otop = (img, bb[1] if bb else 0)
+        return c[1]
+
     def tease_check(self):
+        """滑鼠在她頭頂上方、沒有碰到她，來回晃動＝逗她，她會跳起來跟你玩。碰到她來回晃，是摸摸（`stroke_check`）。"""
         mx, my = cursor_pos()
         lx, ly = self.last_cur
         self.last_cur = (mx, my)
         h = self.current_image().size[1]
-        head = self.y - h
-        near = abs(mx - self.x) < 80 and head - 180 < my < head + 20
+        head = self.y - h + self.opaque_top()
+        near = abs(mx - self.x) < 80 and head - 200 < my < head - 6
         if near and abs(mx - lx) + abs(my - ly) > 12:
             self.tease_n += 2 if self.base_id == "gemini" else 1
         else:
@@ -3169,6 +3251,9 @@ class Pet:
             return False
         self.tease_n = 0
         self.touch()
+        if time.time() > getattr(self, "play_pay", 0):             # 陪她玩也會賺金幣（隔幾秒才算一次）
+            self.play_pay = time.time() + 6
+            self.world.earn(1, self)
         rise = max(30, min(220, head - my + 40))
         plat = self.plat
         self.jump_to(mx, self.y - rise + 50)
@@ -3272,19 +3357,35 @@ class Pet:
             p = [kind, cx + r(-h * .35, h * .35), top + r(0, h * .6), 0, -.3, 28, 28, r(6, 11)]
         self.parts.append(p)
 
+    def coin_pop(self, n):
+        """賺到金幣：一個金幣加「+n」從頭上慢慢飄起來。"""
+        W, H, h = self.dims()
+        side = 1 if self.x < work_area(self.x, self.y - 10)[2] - h * .6 else -1          # 在頭旁邊（對話泡泡不會蓋住），靠右邊緣就改放左邊
+        self.parts.append([f"coin:{n}", W / 2 + side * h * .30, H - h + h * .22 + random.uniform(-6, 6), 0, -.9, 55, 55, 11])
+        self.dirty = True
+
     def draw_parts(self, d, ox=0, oy=0):
         kk = self.k()
         for kind, x, y, vx, vy, left, total, s in self.parts:
             x, y, s = x + ox, y + oy, s * kk
             a = int(255 * min(1, left / total * 1.6))
-            if kind == "heart":
+            if kind.startswith("coin:"):
+                r = s * 1.05
+                d.ellipse((x - r, y - r, x + r, y + r), fill=(255, 205, 60, a), outline=(214, 150, 20, a), width=2)
+                d.ellipse((x - r * .5, y - r * .5, x + r * .5, y + r * .5), outline=(236, 170, 30, a), width=1)
+                TEXT.draw(d, (x + r + 3 * kk, y), kind[5:] if kind[5:].startswith("-") else "+" + kind[5:], int(15 * kk), (200, 120, 10, a), anchor="lm")
+            elif kind == "heart":
                 col = (255, 105, 135, a)
                 r = s / 2
                 d.ellipse((x - s, y - r, x, y + r), fill=col)
                 d.ellipse((x, y - r, x + s, y + r), fill=col)
                 d.polygon([(x - s + 1, y + 2), (x + s - 1, y + 2), (x, y + s * 1.25)], fill=col)
             elif kind == "note":
-                d.text((x, y), "♪", font=TEXT.font(1, int(s)), fill=self.accent + (a,), anchor="mm")
+                nt = fade_icon(icon_pil("note", max(8, int(s * 1.5)), self.accent), a)
+                try:
+                    d._image.alpha_composite(nt, (int(x - nt.width / 2), int(y - nt.height / 2)))
+                except (ValueError, AttributeError):
+                    pass
             elif kind == "z":
                 d.text((x, y), "Z", font=TEXT.font(0, int(s)), fill=(120, 140, 200, a), anchor="mm")
             elif kind == "steam":
@@ -3731,9 +3832,46 @@ class Pet:
                 self.last_love = time.time()
                 w.add_love(self, 1)
 
+    STROKE_STATES = ("idle", "walk", "act", "sleep", "study", "sulk", "chase")
+
+    def stroke_check(self, e):
+        """滑鼠碰到她（頭上、身上都算）來回晃動＝一直摸她，跟摸摸頭一樣。來回三次就算一次摸；
+        在她頭頂上方、沒有碰到她的來回晃，是另一回事（`tease_check`：她會跳起來跟你玩）。"""
+        if self.state not in self.STROKE_STATES:
+            self.stroke = None
+            return
+        now, x = time.time(), e.x_root
+        st = self.stroke
+        if st is None or now - st["t"] > .6:                 # 滑鼠離開過又回來：重新算
+            st = self.stroke = {"ref": x, "dir": 0, "revs": [], "t": now}
+        st["t"] = now
+        d = x - st["ref"]
+        if st["dir"] == 0:
+            if abs(d) >= 8:
+                st["dir"], st["ref"] = (1 if d > 0 else -1), x
+        elif d * st["dir"] > 0:
+            st["ref"] = x                                    # 同方向繼續走：跟著往前推
+        elif abs(d) >= 14:
+            st["dir"], st["ref"] = -st["dir"], x
+            st["revs"] = [t for t in st["revs"] if now - t < 1.6] + [now]
+            if len(st["revs"]) % 2 == 0:
+                self.burst("heart", 1)
+        if len([t for t in st["revs"] if now - t < 1.6]) >= 3 and now >= self.stroke_cd:
+            st["revs"] = []
+            self.stroke_cd = now + 2.2
+            self.touch()
+            if self.state == "act" and self.pose == "pat":
+                self.act_left = int(2.6 * FPS)
+            else:
+                self.pat()
+
     def on_hover(self, e):
-        """巨大化時、或撒嬌把滑鼠拉過來之後，滑鼠在頭上來回晃＝一直摸。"""
-        if self.press or not (self.giant or time.time() < self.cling_until):
+        """巨大化時、或撒嬌把滑鼠拉過來之後，滑鼠在頭上來回晃＝一直摸。平常碰到她來回晃也算摸摸。"""
+        if self.press:
+            return
+        if not self.giant and time.time() >= self.cling_until:
+            self.stroke_check(e)
+        if not (self.giant or time.time() < self.cling_until):
             return
         ex, ey = e.x + self.lw.off[0], e.y + self.lw.off[1]            # 視窗有裁掉透明邊：換回原本的座標
         if self.giant:
@@ -4027,6 +4165,10 @@ class World:
         for d in sorted(CHAR_DIR.iterdir()) if CHAR_DIR.exists() else []:
             if d.is_dir() and (any(d.glob("idle*.webp")) or any(d.glob("idle*.png"))):
                 self.chars[d.name] = Character(d)
+        for ch in self.chars.values():              # 換了衣服，對話泡泡、播放器的顏色還是她自己的顏色
+            base = self.chars.get(ch.base)
+            if base is not None and base is not ch and base.cfg.get("accent"):
+                ch.cfg["accent"] = base.cfg["accent"]
         self.dialogs = []
         dj = CHAR_DIR / "dialogs.json"
         if dj.exists():
@@ -4036,6 +4178,9 @@ class World:
                 log_error()
         self.pets = {}
         self.items = []
+        self._pay_t = {}                   # 每種事情上一次給金幣的時間
+        self._coins_dirty = False
+        self._pay_at = time.time() + COIN_PAY_EVERY
         self.tick = 0
         self.study = None
         self.break_until = None
@@ -4110,7 +4255,7 @@ class World:
                 "stats": {}, "todos": [], "birthday": "", "first_day": datetime.date.today().isoformat(),
                 "checkin": {"last": "", "streak": 0, "total": 0}, "gifts": {}, "celebrated": [],
                 "talk_mode": "daily", "talk_freq": "偶爾", "topic_on": ["數位 IC"], "topics": None,
-                "giant_bg": 0, "giant_rest_bg": 60,
+                "giant_bg": 0, "giant_rest_bg": 60, "coins": COIN_START, "coin_total": 0,
                 "out": ["claude", "deepseek"], "outfits": {}, "pos": {}, "love": {}, "meals_done": ""}
         base.update(s)
         self.upgrade_topics(base)
@@ -4178,6 +4323,7 @@ class World:
         p.burst("sparkle", 6)
         p.act("happy", 3)
         p.say(text=f"好感度 Lv{lv}！\n" + random.choice(p.lines("levelup")), force=True, secs=4)
+        self.earn(20 + 5 * lv, p)
         self.save()
 
     def repack_edges(self, side):
@@ -4210,8 +4356,51 @@ class World:
         return "全部解鎖了！"
 
     # ---------- 統計 ----------
-    def stat(self, key, n=1):
+    def earn(self, n, p=None, quiet=False):
+        """賺金幣：數字會從最近摸過的那隻頭上飄起來。"""
+        if n <= 0:
+            return
+        s = self.settings
+        s["coins"] = s.get("coins", 0) + n
+        s["coin_total"] = s.get("coin_total", 0) + n
+        self._coins_dirty = True
+        self.coins_changed()
+        if quiet or self.giant or not self.settings.get("coin_pop", True):       # 設定裡可以關掉飄金幣（錢照樣賺）
+            return
+        p = p if p is not None and self.pets.get(p.base_id) is p else None
+        if p is None and self.pets:
+            p = max(self.pets.values(), key=lambda q: q.last_touch)
+        if p is not None and p.state not in ("leaving", "hide"):
+            p.coin_pop(n)
+
+    def spend(self, n):
+        """花金幣；不夠就回傳 False（不扣）。"""
+        if self.settings.get("coins", 0) < n:
+            return False
+        self.settings["coins"] -= n
+        self._coins_dirty = True
+        self.coins_changed()
+        return True
+
+    def coins_changed(self):
+        """金幣變了：控制面板上顯示金幣的地方馬上跟著更新（不用等下一次定時更新）。"""
+        pn = getattr(self, "panel", None)
+        if pn is not None:
+            try:
+                pn.show_coins()
+            except Exception:
+                pass
+
+    def coins(self):
+        return self.settings.get("coins", 0)
+
+    def stat(self, key, n=1, pay=True):
         today = datetime.date.today().isoformat()
+        if pay and key in COIN_REWARD:
+            now = time.time()
+            if now - self._pay_t.get(key, 0) > .6:             # 同一件事連著觸發兩次只算一次
+                self._pay_t[key] = now
+                self.earn(COIN_REWARD[key] * n)
         tot = self.totals()
         tot[key] = tot.get(key, 0) + n
         self.check_achievements(key)
@@ -4260,13 +4449,14 @@ class World:
         p = next((q for q in self.pets.values() if q.free() or q.state == "act"), None) or next(iter(self.pets.values()), None)
         for q in self.pets.values():
             self.add_love(q, 1)
+        self.earn(30, p)
         self.save()
         if not p or self.giant:
             return
         p.touch()
         p.burst("sparkle", 10)
         p.act("proud" if p.char.has("proud") else "happy", 3, force=True)
-        p.say(text=f"🏆 解鎖成就【{name}】！{desc}～", force=True, secs=5)
+        p.say(text=f"{TROPHY} 解鎖成就【{name}】！{desc}～", force=True, secs=5)
 
     def title(self):
         """你的稱號：自己選的，沒選就用最新解鎖的。"""
@@ -4305,7 +4495,9 @@ class World:
         p = self.pick_pet()
         for q in self.pets.values():
             self.add_love(q, 3)
-        msg = f"簽到第 {ci['total']} 天！（連續 {ci['streak']} 天）"
+        bonus = 20 + min(30, 2 * ci["streak"])
+        self.earn(bonus, p)
+        msg = f"簽到第 {ci['total']} 天！（連續 {ci['streak']} 天）\n{COIN} 簽到獎勵 +{bonus}"
         special = ci["streak"] in (7, 30, 100, 365)
         if special:
             msg += f"\n連續 {ci['streak']} 天！謝謝你一直來看我們～"
@@ -4560,7 +4752,9 @@ class World:
                 for a in (p, o):
                     a.touch()
                     a.burst("heart", 6)
-                    a.act("pat", 3, "hug")
+                    other = o if a is p else p
+                    key = f"hug_{other.base_id}"                 # 有跟這個對象專屬的台詞就用（例如大肥魚抱小克才會叫大小姐）
+                    a.act("pat", 3, key if a.lines(key) else "hug")
                 self.add_love(p, 2)
                 self.add_love(o, 2)
                 return True
@@ -5941,6 +6135,7 @@ class World:
             if si >= len(segs):
                 p.cling_until = time.time() + 6
                 self.add_love(p, 1)
+                self.earn(5, p)
             return
         n, target, on_start, follow = segs[si]
         if k == 0 and on_start:
@@ -5967,7 +6162,7 @@ class World:
                 ("猜拳：出布", lambda: self.rps(p, "布"), 4.2), ("比大小：猜大", lambda: self.dice(p, True), 4.3),
                 ("比大小：猜小", lambda: self.dice(p, False), 4.3), ("猜糖果：左手", lambda: self.candy(p, True), 4.4),
                 ("猜糖果：右手", lambda: self.candy(p, False), 4.4), ("-", None, 0),
-                ("抽卡", lambda: self.gacha(p), 6.2), ("今日運勢", lambda: self.fortune(p), 7.5),
+                (f"抽卡（{GACHA_COST} 金幣）", lambda: self.gacha(p), 6.2), ("今日運勢", lambda: self.fortune(p), 7.5),
                 ("今天吃什麼", lambda: self.what_to_eat(p), 5), ("講冷笑話", lambda: self.joke(p), 9)]
 
     def do_pose(self, p, pose):
@@ -6035,6 +6230,7 @@ class World:
     def chat(self, p):
         """叫她說點話：照控制面板的說話模式（日常／認真／混合）。"""
         p.touch()
+        self.earn(1, p)
         mode = self.settings.get("talk_mode", "daily")
         if mode == "pro" or (mode == "mix" and random.random() < .5):
             line = self.topic_line()
@@ -6136,8 +6332,13 @@ class World:
         self.later(p, 1700, reveal)
 
     def gacha(self, p):
+        """扭蛋：一次 GACHA_COST 金幣；金幣不夠她會說；抽到重複的退一點金幣。"""
         p.touch()
-        self.stat("game")
+        if not self.spend(GACHA_COST):
+            p.act("oops" if p.char.has("oops") else "surprised", 2.4)
+            p.say(text=f"{COIN} 金幣不夠耶……扭一次要 {GACHA_COST}，現在只有 {self.coins()}\n多陪陪我、摸摸我就會有囉～", force=True, secs=4.5)
+            return False
+        self.stat("game", pay=False)                  # 扭蛋本身不再賺金幣
         ch = p.base                                   # 卡池以原裝為準
         poses = card_poses(ch)
         by = {}
@@ -6152,17 +6353,22 @@ class World:
             cards.append(pose)
         total = len(poses)
         p.act("thinking", 1.2)
-        p.say(text="🃏 抽卡中……", force=True, secs=1.3)
+        p.say(text=f"{COIN} 投幣 -{GACHA_COST}　{CAPSULE} 扭蛋中……", force=True, secs=1.3)
 
         def show():
             if rar in ("SR", "SSR"):
                 p.burst("sparkle", 12 if rar == "SSR" else 6)
+            if not new:
+                self.settings["coins"] = self.coins() + GACHA_REFUND
+                self._coins_dirty = True
+                self.coins_changed()
             p.act(pose, 4.5)
-            p.say(text=f"【{rar}】{POSE_NAMES.get(pose, pose)}的{p.name}" + ("　NEW!" if new else "") +
-                  f"\n收集 {len(cards)}/{total}", force=True, secs=4.5)
+            p.say(text=f"【{rar}】{POSE_NAMES.get(pose, pose)}的{p.name}" + ("　NEW!" if new else f"　重複，退回 {GACHA_REFUND} 金幣") +
+                  f"\n收集 {len(cards)}/{total}　{COIN} {self.coins()}", force=True, secs=4.5)
             self.add_love(p, 1)
             self.save()
         self.later(p, 1500, show)
+        return True
 
     def what_to_eat(self, p):
         p.touch()
@@ -6598,6 +6804,15 @@ class World:
             return self.quit()
         if self.tick % 30 == 0:
             self.check_fullscreen()
+        if time.time() >= self._pay_at and self.pets and not self.hide_reasons:     # 陪伴獎勵：有她們在桌面上就會賺
+            self._pay_at = time.time() + COIN_PAY_EVERY
+            self.earn(2 * len(self.pets))
+            ps = [q for q in self.pets.values() if q.free()]
+            if ps and not self.settings.get("quiet") and self.settings.get("coin_pop", True) and random.random() < .5:
+                random.choice(ps).say(text=random.choice(["陪你這麼久，賺到金幣了～", "謝謝你陪我～", "金幣＋1……不對，好幾個！"]), secs=3)
+        if self._coins_dirty and self.tick % 60 == 0:
+            self._coins_dirty = False
+            self.save()
         self.check_topic()
         self.check_time_chat()
         if self.tick % 15 == 0:                      # 待辦可以設到秒，要常常看一下
@@ -6760,6 +6975,7 @@ class World:
         """右鍵選單只放日常會用的；其他都在控制面板。"""
         m = PopMenu(self.root, tearoff=0)
         m.add_command(label=f"♥ {p.name}　Lv{self.love_level(p.base_id)} {self.love_title(p.base_id)}", state="disabled")
+        m.add_command(label=f"{COIN} 金幣 {self.coins()}", state="disabled")
         m.add_separator()
         m.add_command(label="摸摸頭", command=p.pat)
         m.add_command(label="餵食", command=lambda: self.feed(p))
@@ -6803,16 +7019,16 @@ class World:
             m.add_command(label="陪我休息", command=lambda: self.enter_rest(p.base_id))
         sz = PopMenu(m, tearoff=0)
         for name in SIZES:
-            sz.add_command(label=("✓ " if self.settings.get("size", "中") == name else "　") + name,
+            sz.add_command(label=("✓" if self.settings.get("size", "中") == name else NOICON) + name,
                            command=lambda n=name: self.set_size(n))
         m.add_cascade(label="大小", menu=sz)
         who = PopMenu(m, tearoff=0)
         for cid in self.base_ids():
             name = self.disp_name(cid)
             if cid in self.pets:
-                who.add_command(label=f"✓ {name}", command=lambda cid=cid: self.dismiss(self.pets[cid]))
+                who.add_command(label=f"✓{name}", command=lambda cid=cid: self.dismiss(self.pets[cid]))
             else:
-                who.add_command(label=f"　{name}", command=lambda cid=cid: self.spawn(cid))
+                who.add_command(label=f"{NOICON}{name}", command=lambda cid=cid: self.spawn(cid))
         m.add_cascade(label="叫誰來玩", menu=who)
         throw = PopMenu(m, tearoff=0)
         for name in ITEMS:
@@ -6824,7 +7040,7 @@ class World:
         eq = PopMenu(m, tearoff=0)
         for kind, label in EQUIP.items():
             on = kind in self.equip
-            eq.add_command(label=("✓ " if on else "　") + label, command=lambda k=kind, on=on: self.set_equip(k, not on))
+            eq.add_command(label=("✓" if on else NOICON) + label, command=lambda k=kind, on=on: self.set_equip(k, not on))
         m.add_cascade(label="遊樂器材", menu=eq)
         m.add_command(label=f"讓{p.name}回家", command=lambda: self.dismiss(p))
         m.add_command(label="請她放音樂", command=lambda: self.open_music(p.base_id))
@@ -7482,7 +7698,8 @@ class SongList(tk.Canvas):
         self.delete("all")
         H = self.view_h()
         if not self.songs:
-            self.create_text(self.W / 2, 50, text="♪ 目前沒有任何音檔", font=(FONT, 11, "bold"), fill=rgbhex(self.th["muted"]))
+            tw_ = tkfont.Font(font=(FONT, 11, "bold")).measure("目前沒有任何音檔") + 22
+            canvas_icon_text(self, (self.W - tw_) / 2, 50, "♪ 目前沒有任何音檔", (FONT, 11, "bold"), rgbhex(self.th["muted"]), 16)
             return
         self.items = {}                                                 # 每一首的 (標題圖, 小唱片) 在畫布上的編號
         lifted = None
@@ -7514,8 +7731,8 @@ class SongList(tk.Canvas):
             texts.append(self.create_text(x0 - off + w + 40, ty, text=title, font=self.f_title, fill=fg, anchor="w"))
         if sub:
             sc = rgbhex(th["acc_ll"] if kind == "cur" else th["muted"])
-            self.create_text(x0, y + self.ROW / 2 + 10, text="📁 " + sub.rstrip("）"), font=self.f_sub, fill=sc, anchor="w")
-        if over or (sub and self.f_sub.measure("📁 " + sub) > self.avail()):
+            canvas_icon_text(self, x0, y + self.ROW / 2 + 10, "📁 " + sub.rstrip("）"), self.f_sub, sc, 14)
+        if over or (sub and self.f_sub.measure(sub) + 18 > self.avail()):
             self.create_image(self.PAD + dx + self.text_x() - self.PAD + self.avail() - self.FADE, y,
                               image=self.mask(kind, "right"), anchor="nw")
         if rolling:
@@ -7812,13 +8029,16 @@ class MusicPlayer:
                   cursor="hand2", font=(FONT, 9), padx=8, pady=3, takefocus=0, highlightthickness=0)
         tk.Button(ff, text="重新整理", command=self.scan, **fb).pack(side="right", padx=(6, 0))
         tk.Button(ff, text="換資料夾", command=self.pick_folder, **fb).pack(side="right", padx=(6, 0))
-        tk.Button(ff, text="📂 打開資料夾", command=self.open_folder,
-                  **dict(fb, bg=self.ACC, fg="white", activebackground=rgbhex(th["acc_l"]))).pack(side="right")
+        ob = tk.Button(ff, command=self.open_folder, **dict(fb, bg=self.ACC, fg="white", activebackground=rgbhex(th["acc_l"])))
+        set_icon_text(ob, "📂 打開資料夾", 15)
+        ob.pack(side="right")
         self.dir_lbl = tk.Label(ff, text="", bg=self.BG, fg=self.MUTED, font=(FONT, 9), anchor="w", width=1)
         self.dir_lbl.pack(side="left", fill="x", expand=True)
         # 歌單
         head = self.list_head = tk.Frame(top, bg=self.BG)
-        tk.Label(head, text="🎶 歌單", bg=self.BG, fg=self.ACC, font=(FONT, 10, "bold")).pack(side="left")
+        hl = tk.Label(head, bg=self.BG, fg=self.ACC, font=(FONT, 10, "bold"))
+        set_icon_text(hl, "🎶 歌單", 16)
+        hl.pack(side="left")
         tk.Label(head, text="拖曳或滾輪捲動・點兩下播放・拖右邊小點點換順序", bg=self.BG, fg=self.MUTED, font=(FONT, 8)).pack(side="right")
         self.lst = SongList(top, self, self.W - 12)
         self.lst.sel = sel
@@ -7828,7 +8048,7 @@ class MusicPlayer:
         top.after(80, lambda: self.cur is not None and self.lst.winfo_exists() and self.lst.see(self.cur))   # 畫好之後捲到正在播的那首
         name = self.w.disp_name(self.cid)
         song = self.title()
-        top.title(f"🎵 {song} - {name} DJ" if song else f"🎧 {name}來播音樂")
+        top.title(f"{song} - {name} DJ" if song else f"{name}來播音樂")
         if not first:
             self.w.music_dj_changed(self.cid)
 
@@ -7848,9 +8068,10 @@ class MusicPlayer:
         for _ in range(26):
             x, y, r = rng.uniform(8, W - 8), rng.uniform(8, 250), rng.uniform(1.5, 3.2)
             d.ellipse((x - r, y - r, x + r, y + r), fill=(255, 255, 255, 170))
-        for x, y, s, ch in ((40, 60, 20, "♪"), (352, 236, 18, "♫"), (60, 228, 14, "♪"), (330, 96, 13, "♩")):
-            d.text((x, y), ch, font=TEXT.font(1, s), fill=th["note"] + (200,), anchor="mm")
-        d.text((14, 11), "🎧", font=TEXT.font(1, 12), fill=th["acc_d"] + (230,))       # 耳機圖示比字大一點、偏低，縮小並上移才會跟字對齊
+        for x, y, s, ch in ((40, 60, 20, "note"), (352, 236, 18, "notes"), (60, 228, 14, "note"), (330, 96, 13, "note")):
+            nt = fade_icon(icon_pil(ch, int(s * 1.5), th["note"]), 200)                 # 小音符：自己畫的，不是文字
+            bg.alpha_composite(nt, (int(x - nt.width / 2), int(y - nt.height / 2)))
+        bg.alpha_composite(fade_icon(icon_pil("headphones", 17, th["acc_d"]), 235), (12, 9))       # 耳機也是畫的
         TEXT.draw(d, (33, 12), f"DJ {self.w.disp_name(self.cid)}", 13, th["acc_d"] + (230,))
         cv.create_image(0, 0, image=self.tkimg("bg", bg), anchor="nw")
         sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))                # 唱片底下的影子
@@ -8127,7 +8348,7 @@ class MusicPlayer:
             mode = "單曲重複" if self.repeat_one else "隨機播放" if self.shuffle else "照順序播"
             sub = f"第 {self.cur + 1} / {len(self.songs)} 首 ・ {mode}"
         else:
-            name = "選一首歌來播吧 ♪" if self.songs else "目前沒有任何音檔"
+            name = "選一首歌來播吧" if self.songs else "目前沒有任何音檔"
             sub = f"共 {len(self.songs)} 首" if self.songs else ""
         if self.msg:
             sub = self.msg
@@ -8252,7 +8473,7 @@ class MusicPlayer:
         self.history = []
         self.mark_current()
         name = Path(self.folder).name if self.folder else ""
-        self.dir_lbl.config(text=f"📁 {name}（{len(self.songs)} 首）" if self.folder else "📁 還沒選資料夾")
+        set_icon_text(self.dir_lbl, f"📁 {name}（{len(self.songs)} 首）" if self.folder else "📁 還沒選資料夾", 14)
         if hasattr(self, "title_item"):
             self.redraw_text()
 
@@ -8312,7 +8533,7 @@ class MusicPlayer:
         self.pos_ms = 0
         self.set_volume(self.volume)
         title = name.split("　（")[0]
-        self.top.title(f"🎵 {title} - {self.w.disp_name(self.cid)} DJ")
+        self.top.title(f"{title} - {self.w.disp_name(self.cid)} DJ")
         self.mark_current()
         self.set_playing(True)
         self.redraw_text()
@@ -8326,11 +8547,11 @@ class MusicPlayer:
             self.fails += 1
             self.mark_current()
             if self.fails < len(self.songs):
-                self.msg = f"⚠ 「{name.split('　（')[0]}」播不了，跳下一首"
+                self.msg = f"「{name.split('　（')[0]}」播不了，跳下一首"
                 self.redraw_text()
                 self.top.after(900, lambda: self.next(auto=True))
             else:
-                self.msg = "⚠ 這個資料夾裡的音樂都播不了……"
+                self.msg = "這個資料夾裡的音樂都播不了……"
                 self.set_playing(False)
                 self.redraw_text()
 
@@ -8501,8 +8722,12 @@ class GiantBar:
         head = tk.Frame(f, bg=bg)
         head.grid(row=0, column=0, columnspan=4, sticky="ew")
         tk.Label(head, text="巨大化", bg=bg, fg=mute, font=font).pack(side="left")
-        tk.Button(head, text="×", command=world.exit_giant, **dict(btn, bg="#c0533d", activebackground="#d8654d", padx=6)).pack(side="right")
-        tk.Button(head, text="－", command=self.collapse, **dict(btn, padx=7)).pack(side="right", padx=4)
+        b = tk.Button(head, command=world.exit_giant, **dict(btn, bg="#c0533d", activebackground="#d8654d", padx=6))
+        set_icon_text(b, "×", 13, "#ffffff")
+        b.pack(side="right")
+        b = tk.Button(head, command=self.collapse, **dict(btn, padx=7))
+        set_icon_text(b, "－", 13, fg)
+        b.pack(side="right", padx=4)
         tk.Label(f, text="背景暗度", bg=bg, fg=mute, font=font).grid(row=1, column=0, sticky="w", pady=(8, 0))
         self.key = "giant_rest_bg" if world.giant_dim else "giant_bg"
         self.v = tk.IntVar(value=world.giant_bg_pct())
@@ -8511,10 +8736,14 @@ class GiantBar:
         tk.Scale(f, from_=0, to=100, orient="horizontal", variable=self.v, showvalue=False, length=170,
                  bg=bg, fg=fg, troughcolor="#4a4152", highlightthickness=0, bd=0, sliderrelief="flat",
                  command=self.changed).grid(row=1, column=1, columnspan=2, padx=6, pady=(8, 0))
-        tk.Button(f, text="◀", command=lambda: self.step(-1), **btn).grid(row=2, column=0, pady=(8, 0), sticky="w")
+        b = tk.Button(f, command=lambda: self.step(-1), **btn)
+        set_icon_text(b, "◀", 13, fg)
+        b.grid(row=2, column=0, pady=(8, 0), sticky="w")
         self.card = tk.Label(f, text="", bg=bg, fg=fg, font=font, width=16)
         self.card.grid(row=2, column=1, columnspan=2, pady=(8, 0))
-        tk.Button(f, text="▶", command=lambda: self.step(1), **btn).grid(row=2, column=3, pady=(8, 0), sticky="e")
+        b = tk.Button(f, command=lambda: self.step(1), **btn)
+        set_icon_text(b, "▶", 13, fg)
+        b.grid(row=2, column=3, pady=(8, 0), sticky="e")
         row = tk.Frame(f, bg=bg)
         row.grid(row=3, column=0, columnspan=4, pady=(8, 0), sticky="ew")
         tk.Button(row, text="恢復動作", command=world.clear_card, **btn).pack(side="left")
@@ -8522,11 +8751,17 @@ class GiantBar:
         if world.giant_resting:
             tk.Button(row, text="不休息了", command=world.stop_rest, **btn).pack(side="left")
         else:
-            tk.Button(row, text="休息 💤", command=world.enter_rest, **btn).pack(side="left")
+            b = tk.Button(row, command=world.enter_rest, **btn)
+            set_icon_text(b, "休息 💤", 15, fg)
+            b.pack(side="left")
         # 縮小的樣子：兩顆小圓鈕
         m = self.mini = tk.Frame(top, bg=bg, padx=6, pady=6)
-        tk.Button(m, text="≡", command=self.expand, **dict(btn, padx=8)).pack(side="left")
-        tk.Button(m, text="×", command=world.exit_giant, **dict(btn, bg="#c0533d", activebackground="#d8654d", padx=8)).pack(side="left", padx=(6, 0))
+        b = tk.Button(m, command=self.expand, **dict(btn, padx=8))
+        set_icon_text(b, "≡", 14, fg)
+        b.pack(side="left")
+        b = tk.Button(m, command=world.exit_giant, **dict(btn, bg="#c0533d", activebackground="#d8654d", padx=8))
+        set_icon_text(b, "×", 13, "#ffffff")
+        b.pack(side="left", padx=(6, 0))
         top.bind("<Escape>", lambda e: world.exit_giant())
         self.area = work_area(pet.x, pet.floor - 10)
         self.expand()
@@ -8618,7 +8853,9 @@ class MiniPanel:
         head.pack(fill="x", padx=8, pady=(6, 2))
         self.title = tk.Label(head, text="", bg=C_BG, fg=C_ACCENT, font=(FONT, 11, "bold"))
         self.title.pack(side="left")
-        ttk.Button(head, text="完整面板 ⤢", style="Mini.TButton", command=lambda: world.switch_panel("full")).pack(side="right")
+        full_btn = ttk.Button(head, style="Mini.TButton", command=lambda: world.switch_panel("full"))
+        set_icon_text(full_btn, "完整面板 ⤢", 12)
+        full_btn.pack(side="right")
         self.chrome = Chrome(top, head, top.withdraw)
         self.row = tk.Frame(top, bg=C_BG)
         self.row.pack(fill="x", padx=8, pady=2)
@@ -8626,11 +8863,13 @@ class MiniPanel:
         grid.pack(fill="x", padx=8, pady=(2, 4))
         acts = [("摸摸頭", lambda p: p.pat()), ("餵食", world.feed), ("說說話", world.chat),
                 ("撒嬌", world.mischief), ("跳一下", lambda p: (p.touch(), p.act("happy", 1.4))),
-                ("抽卡", lambda p: world.enqueue(p, lambda: world.gacha(p), 6.2)),
+                (f"抽卡 {GACHA_COST}", lambda p: world.enqueue(p, lambda: world.gacha(p), 6.2)),
                 ("戳一下", lambda p: p.poke()), ("巨大化", lambda p: world.enter_giant(p.base_id))]
         for i, (label, fn) in enumerate(acts):
-            ttk.Button(grid, text=label, style="Mini.TButton", width=7,
-                       command=lambda fn=fn: self.do(fn)).grid(row=i // 4, column=i % 4, padx=2, pady=2, sticky="ew")
+            b = ttk.Button(grid, text=label, style="Mini.TButton", width=7, command=lambda fn=fn: self.do(fn))
+            b.grid(row=i // 4, column=i % 4, padx=2, pady=2, sticky="ew")
+            if label.startswith("抽卡"):                             # 後面接一枚畫好的金幣，表示要花錢
+                set_icon_text(b, label + COIN, 13)
         bot = tk.Frame(top, bg=C_BG)
         bot.pack(fill="x", padx=8, pady=(0, 8))
         self.study = ttk.Button(bot, text="", style="MiniAccent.TButton",
@@ -8804,11 +9043,13 @@ class PopMenu:
             row = tk.Frame(box, bg=C_CARD, cursor="hand2" if state == "normal" else "")
             row.pack(fill="x")
             fg = C_MUTED if state == "disabled" else C_TEXT
-            lb = tk.Label(row, text=label, bg=C_CARD, fg=fg, font=(FONT, 10), anchor="w", padx=12, pady=4)
+            lb = tk.Label(row, bg=C_CARD, fg=fg, font=(FONT, 10), anchor="w", padx=12, pady=4)
+            set_icon_text(lb, label, 15, C_ACCENT if label[:1] == "✓" else None)
             lb.pack(side="left", fill="x", expand=True)
             parts = [row, lb]
             if kind == "sub":
-                ar = tk.Label(row, text="›", bg=C_CARD, fg=C_MUTED, font=(FONT, 11), padx=8)
+                ar = tk.Label(row, bg=C_CARD, fg=C_MUTED, padx=8)
+                set_icon_text(ar, "›", 12)
                 ar.pack(side="right")
                 parts.append(ar)
             if state == "disabled":
@@ -8926,7 +9167,8 @@ def ask(parent, title, message, initial=None, ok="確定", cancel="取消"):
     head = tk.Frame(box, bg=C_CARD)
     head.pack(fill="x")
     tk.Label(head, text=title, bg=C_CARD, fg=C_ACCENT, font=(FONT, 12, "bold")).pack(side="left")
-    x = tk.Label(head, text="✕", bg=C_CARD, fg="#c0533d", font=(FONT, 11, "bold"), cursor="hand2", padx=4)
+    x = tk.Label(head, bg=C_CARD, fg="#c0533d", cursor="hand2", padx=4)
+    set_icon_text(x, "✕", 14)
     x.pack(side="right")
     tk.Label(box, text=message, bg=C_CARD, fg=C_TEXT, font=(FONT, 10), justify="left", wraplength=360).pack(
         anchor="w", pady=(10, 8))
@@ -8988,8 +9230,10 @@ class Chrome:
         top.configure(highlightthickness=1, highlightbackground=line or C_LINE, highlightcolor=line or C_LINE)
         first = bar.winfo_children()[0] if bar.winfo_children() else None
         bs = dict(bg=bar["bg"], font=(FONT, 11, "bold"), cursor="hand2", padx=7, pady=0)
-        x = tk.Label(bar, text="✕", fg="#c0533d", **bs)
-        m = tk.Label(bar, text="－", fg=C_MUTED, **bs)
+        x = tk.Label(bar, fg="#c0533d", **bs)
+        m = tk.Label(bar, fg=C_MUTED, **bs)
+        set_icon_text(x, "✕", 14)
+        set_icon_text(m, "－", 14)
         for b, cmd, hover in ((x, on_close, "#fde3dc"), (m, self.minimize, "#f3e9df")):
             b.pack(side="right", before=first) if first else b.pack(side="right")
             b.bind("<Button-1>", lambda e, c=cmd: c())
@@ -8999,7 +9243,8 @@ class Chrome:
             wdg.bind("<ButtonPress-1>", self.move_start)
             wdg.bind("<B1-Motion>", self.move_drag)
         if resizable:
-            grip = tk.Label(top, text="◢", fg=C_MUTED, bg=top["bg"], font=(FONT, 9), cursor="size_nw_se")
+            grip = tk.Label(top, fg=C_MUTED, bg=top["bg"], cursor="size_nw_se")
+            set_icon_text(grip, "◢", 11)
             grip.place(relx=1.0, rely=1.0, anchor="se")
             grip.bind("<ButtonPress-1>", self.size_start)
             grip.bind("<B1-Motion>", self.size_drag)
@@ -9073,7 +9318,9 @@ class Panel:
         bar = tk.Frame(top, bg=C_BG)
         bar.pack(fill="x", padx=10, pady=(6, 0))
         tk.Label(bar, text="AIchanDesk - 你的桌面小可愛們", bg=C_BG, fg=C_MUTED, font=(FONT, 9)).pack(side="left")
-        ttk.Button(bar, text="切換成小面板 ⇲", command=lambda: world.switch_panel("mini")).pack(side="right")
+        mini_btn = ttk.Button(bar, command=lambda: world.switch_panel("mini"))
+        set_icon_text(mini_btn, "切換成小面板 ⇲", 12)
+        mini_btn.pack(side="right")
         self.chrome = Chrome(top, bar, top.withdraw, resizable=True, minsize=(700, 480))
         # 分頁按鈕自己排成兩列（ttk 的分頁列不會換行）：上面是功能、下面是每隻角色
         self.tabbar = tk.Frame(top, bg=C_BG)
@@ -9173,7 +9420,7 @@ class Panel:
         self.top.option_add("*TCombobox*Listbox.selectForeground", C_TEXT)
         self.top.option_add("*TCombobox*Listbox.font", (FONT, 10))
         # 選完、按完：把焦點還給視窗，選單和按鈕都恢復原樣（不要留著「剛剛點過」的樣子）
-        rest = lambda e: e.widget.after_idle(lambda: settle(e.widget))
+        rest = lambda e: hasattr(e.widget, "after_idle") and e.widget.after_idle(lambda: settle(e.widget))      # 下拉清單的事件有時候 widget 只是一串名字
 
         def settle(wdg):
             try:
@@ -9308,7 +9555,9 @@ class Panel:
                             ("一起睡覺", w.all_sleep), ("叫醒大家", w.all_wake)], cols=4)
 
         body = self.card(f, "音樂", note="誰來播音樂：請一隻當 DJ，播放器會換成她的顏色；大家會跟著一起跳舞")
-        ttk.Button(body, text="🎵 音樂播放器", style="Accent.TButton", command=w.open_music).grid(row=0, column=0, sticky="w")
+        music_btn = ttk.Button(body, style="Accent.TButton", command=w.open_music)
+        set_icon_text(music_btn, "🎵 音樂播放器", 16, "#ffffff")
+        music_btn.grid(row=0, column=0, sticky="w")
         self.label(body, "想換誰當 DJ：右鍵點她選「請她放音樂」，或到她自己的分頁按「請她放音樂」", muted=True, size=9).grid(
             row=0, column=1, sticky="w", padx=8)
 
@@ -9338,10 +9587,11 @@ class Panel:
         self.giant_pick.grid(row=0, column=0, padx=(0, 6))
         ttk.Button(body, text="巨大化", style="Accent.TButton",
                    command=lambda: w.enter_giant(names[self.giant_pick.get()])).grid(row=0, column=1, padx=3)
-        ttk.Button(body, text="休息模式 💤",
-                   command=lambda: w.enter_rest(names[self.giant_pick.get()])).grid(row=0, column=2, padx=3)
+        rest_btn = ttk.Button(body, command=lambda: w.enter_rest(names[self.giant_pick.get()]))
+        set_icon_text(rest_btn, "休息模式 💤", 16)
+        rest_btn.grid(row=0, column=2, padx=3)
         ttk.Button(body, text="結束巨大化", command=w.exit_giant).grid(row=0, column=3, padx=3)
-        self.label(body, "摸頭、戳臉頰、碰身體反應都不一樣；在頭上來回晃是一直摸；按 Esc 或右上角 × 結束",
+        self.label(body, "摸頭、戳臉頰、碰身體反應都不一樣；在頭上來回晃是一直摸；按 Esc 或點右上角的關閉鈕結束",
                    muted=True, size=9, wraplength=520, justify="left").grid(row=1, column=0, columnspan=4, sticky="w", pady=(6, 0))
         self.label(body, "背景暗度在巨大化畫面右上角的小視窗調", muted=True, size=9).grid(
             row=2, column=0, columnspan=4, sticky="w", pady=(4, 0))
@@ -9447,7 +9697,8 @@ class Panel:
         text = self.todo_text.get().strip() or None
         w.remind_in(p, minutes, text)
         self.todo_text.delete(0, "end")
-        self.todo_msg.config(text=f"✓ {dur_text(minutes * 60)}後，{w.disp_name(p.base_id)}會來提醒你", fg=C_ACCENT)
+        set_icon_text(self.todo_msg, f"✓ {dur_text(minutes * 60)}後，{w.disp_name(p.base_id)}會來提醒你", 14, C_ACCENT)
+        self.todo_msg.config(fg=C_ACCENT)
         self.todo_sig = None
         self.refresh_todos()
 
@@ -9467,9 +9718,11 @@ class Panel:
         elif rep != "none":
             due = first_due(due, rep)
             td = {"repeat": rep, "time": due.strftime("%H:%M"), "at": due.isoformat(timespec="seconds")}
-            self.todo_msg.config(text=f"⏰ {repeat_text(td)} 提醒你（第一次：{when_text(due)}）", fg=C_ACCENT)
+            set_icon_text(self.todo_msg, f"⏰ {repeat_text(td)} 提醒你（第一次：{when_text(due)}）", 15)
+            self.todo_msg.config(fg=C_ACCENT)
         else:
-            self.todo_msg.config(text=f"⏰ 會在 {when_text(due)} 提醒你", fg=C_ACCENT)
+            set_icon_text(self.todo_msg, f"⏰ 會在 {when_text(due)} 提醒你", 15)
+            self.todo_msg.config(fg=C_ACCENT)
 
     def add_todo(self):
         t = self.todo_text.get().strip()
@@ -9496,8 +9749,9 @@ class Panel:
         self.todo_text.delete(0, "end")
         self.todo_time.delete(0, "end")
         self.todo_rep.set(REPEATS[0][1])
-        self.todo_msg.config(text=(f"✓ 加好了，{repeat_text(td)} 提醒你" if td.get("repeat") else
-                                   f"✓ 加好了，{when_text(due)} 提醒你") if due else "✓ 加好了", fg=C_ACCENT)
+        set_icon_text(self.todo_msg, (f"✓ 加好了，{repeat_text(td)} 提醒你" if td.get("repeat") else
+                                      f"✓ 加好了，{when_text(due)} 提醒你") if due else "✓ 加好了", 14, C_ACCENT)
+        self.todo_msg.config(fg=C_ACCENT)
         self.todo_sig = None
         self.refresh_todos()
 
@@ -9510,7 +9764,9 @@ class Panel:
         for c in self.todo_body.winfo_children():
             c.destroy()
         if not todos:
-            self.label(self.todo_body, "目前沒有待辦事項 🎉", muted=True).pack(anchor="w")
+            empty = self.label(self.todo_body, "", muted=True)
+            set_icon_text(empty, "目前沒有待辦事項 🎉", 16)
+            empty.pack(anchor="w")
             return
         today = datetime.date.today()
 
@@ -9540,14 +9796,18 @@ class Panel:
                                  command=lambda td=td, v=v: self.todo_toggle(td, v.get()))
             cb.pack(side="left")
             if td.get("repeat", "none") != "none":
-                self.label(row, "🔁 " + repeat_text(td), muted=True).pack(side="left", padx=8)
+                rp = self.label(row, "", muted=True)
+                set_icon_text(rp, "🔁 " + repeat_text(td), 14)
+                rp.pack(side="left", padx=8)
             elif td.get("at"):
                 try:
                     due = datetime.datetime.fromisoformat(td["at"])
                     tag = when_text(due) + ("（提醒過了）" if td.get("notified") == td["at"] else "")
                 except ValueError:
                     tag = td.get("time", "")
-                self.label(row, "⏰ " + tag, muted=True).pack(side="left", padx=8)
+                ck = self.label(row, "", muted=True)
+                set_icon_text(ck, "⏰ " + tag, 14)
+                ck.pack(side="left", padx=8)
             if td.get("by") in self.w.chars and (td.get("at") or td.get("time")):
                 self.label(row, f"{self.w.disp_name(td['by'])}提醒", muted=True, size=9).pack(side="left", padx=4)
             ttk.Button(row, text="刪除", width=5, command=lambda td=td: self.todo_del(td)).pack(side="right")
@@ -9755,6 +10015,10 @@ class Panel:
         self.gal_count = self.label(top, "", muted=True)
         self.gal_count.pack(side="left", padx=10)
         ttk.Button(top, text="取消卡片（恢復動作）", command=w.clear_card).pack(side="right")
+        ttk.Button(top, text=f"扭一次（{GACHA_COST} 金幣）", command=self.gallery_gacha).pack(side="right", padx=6)
+        self.gal_coin = self.label(top, "", bold=True)
+        set_icon_text(self.gal_coin, f"{COIN}{w.coins()}")
+        self.gal_coin.pack(side="right")
         legend = tk.Frame(body, bg=C_CARD)
         legend.pack(fill="x", pady=(6, 0))
         for r in ("SSR", "SR", "R", "N"):
@@ -9786,6 +10050,32 @@ class Panel:
             bg.alpha_composite(box)
             self.gal_thumbs[key] = ImageTk.PhotoImage(bg)
         return self.gal_thumbs[key]
+
+    def show_coins(self):
+        """更新面板上所有顯示金幣的地方（圖鑑頁的、紀錄頁的）；沒建好的分頁就略過。"""
+        w = self.w
+        try:
+            if hasattr(self, "gal_coin") and self.gal_coin.winfo_exists():
+                set_icon_text(self.gal_coin, f"{COIN}{w.coins()}")
+            if hasattr(self, "coin_label") and self.coin_label.winfo_exists():
+                set_icon_text(self.coin_label, f"{COIN}金幣 {w.coins()}　・　累計賺到 {w.settings.get('coin_total', 0)}　（陪她們、摸摸、玩、餵食都會賺）", 18)
+        except tk.TclError:
+            pass
+
+    def gallery_gacha(self):
+        """在圖鑑裡直接扭蛋：用這一頁選的那隻當抽卡的角色（她要在桌面上）。"""
+        w = self.w
+        cid = self.gal_names.get(self.gal_pick.get())
+        p = w.pets.get(cid)
+        if p is None:
+            self.gal_count.config(text="她還沒出來，先叫她來玩～")
+            return
+        if p.state in ("drag", "air", "leaving") or p.giant:
+            self.gal_count.config(text="她現在忙著，等一下再扭～")
+            return
+        if w.gacha(p):
+            self.top.after(2500, self.gallery_fill)
+        set_icon_text(self.gal_coin, f"{COIN}{w.coins()}")
 
     def gallery_fill(self):
         w = self.w
@@ -9824,7 +10114,9 @@ class Panel:
         body = self.card(f, "合照", note="右鍵選單或系統匣的「拍照」會把桌面上的大家拍下來")
         row = tk.Frame(body, bg=C_CARD)
         row.pack(fill="x")
-        ttk.Button(row, text="拍一張 📸", style="Accent.TButton", command=self.w.take_photo).pack(side="left")
+        photo_btn = ttk.Button(row, style="Accent.TButton", command=self.w.take_photo)
+        set_icon_text(photo_btn, "拍一張 📸", 16)
+        photo_btn.pack(side="left")
         ttk.Button(row, text="打開相簿資料夾", command=self.open_album).pack(side="left", padx=6)
         self.album_count = self.label(row, "", muted=True)
         self.album_count.pack(side="left", padx=8)
@@ -9878,7 +10170,7 @@ class Panel:
         body = self.card(f, "成就")
         self.ach_rows = {}
         for i, (aid, name, desc, k, need) in enumerate(ACHIEVEMENTS):
-            icon = self.label(body, "🔒", size=12)
+            icon = self.label(body, "", size=12)
             icon.grid(row=i, column=0, padx=(0, 6))
             nm = self.label(body, name, bold=True)
             nm.grid(row=i, column=1, sticky="w")
@@ -9895,7 +10187,7 @@ class Panel:
         got = w.settings.get("achievements", {})
         for aid, (icon, nm, bar, num, k, need) in self.ach_rows.items():
             v = min(need, w.ach_value(k))
-            icon.config(text="🏆" if aid in got else "🔒")
+            set_icon_text(icon, TROPHY if aid in got else LOCK, 22)
             nm.config(fg=C_ACCENT if aid in got else C_TEXT)
             bar["value"] = v
             num.config(text=f"{got[aid]} 解鎖" if aid in got else f"{v}/{need}")
@@ -9921,6 +10213,8 @@ class Panel:
         body = self.card(f, "我們的日子")
         self.days_label = self.label(body, "", size=11)
         self.days_label.pack(anchor="w")
+        self.coin_label = self.label(body, "", size=11)
+        self.coin_label.pack(anchor="w", pady=(4, 0))
         body = self.card(f, "統計")
         self.stat_labels = {}
         for j, head in enumerate(("", "今天", "這週", "全部")):
@@ -9966,7 +10260,7 @@ class Panel:
                  ("visit", "會走來找你"), ("watch_app", "看你在做什麼（只在本機判斷）"),
                  ("cling", "撒嬌：會抓你的滑鼠去玩"), ("cling_force", "撒嬌時強制拖走（你動滑鼠也不放手）"),
                  ("quiet", "安靜模式：不主動說話"), ("hide_fullscreen", "全螢幕（看影片、玩遊戲）時躲起來"),
-                 ("check_update", "自動檢查新版本")]
+                 ("coin_pop", "賺到金幣時，在她旁邊顯示飄起來的金幣"), ("check_update", "自動檢查新版本")]
         self.flag_vars = {}
         for i, (k, label) in enumerate(flags):
             v = tk.BooleanVar(value=w.settings.get(k, k not in ("quiet", "cling", "cling_force")))
@@ -10099,7 +10393,8 @@ class Panel:
             name_lb.config(text=w.disp_name(cid))
             self.nb.tab(self.tabs[cid], text=w.disp_name(cid))
             self.tab_btns[cid].config(text=w.disp_name(cid))
-        pen = tk.Label(nm, text="✎", bg=C_CARD, fg=C_MUTED, font=(FONT, 13), cursor="hand2")
+        pen = tk.Label(nm, bg=C_CARD, fg=C_MUTED, cursor="hand2")
+        set_icon_text(pen, "✎", 16)
         pen.pack(side="left", padx=(6, 0), pady=(4, 0))
         pen.bind("<Button-1>", lambda e: rename())
         pen.bind("<Enter>", lambda e: pen.config(fg=color))
@@ -10207,6 +10502,7 @@ class Panel:
         except tk.TclError:
             return
         w = self.w
+        self.show_coins()
         for cid, v in self.summon_vars.items():
             v.set(cid in w.pets)
         for kind, v in getattr(self, "equip_vars", {}).items():
