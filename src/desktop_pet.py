@@ -153,7 +153,11 @@ COIN_START = 60            # 第一次用就先給一些，馬上可以扭一次
 GACHA_COST = 30            # 扭蛋一次
 GACHA_REFUND = 10          # 抽到重複的卡，退回一點金幣
 COIN_PAY_EVERY = 300       # 陪伴獎勵：每幾秒一次（每隻在場的小可愛 +2）
-COIN_REWARD = {"pat": 2, "feed": 3, "game": 3, "hug": 3, "photo": 3, "found": 3, "study": 30, "swing": 3, "slide": 3,
+# 請客：她們偶爾會拿一份點心給朋友。每個人的拿手點心（對方愛吃的更常帶）
+TREAT_EVERY = (360, 600)         # 隔多久（秒）會有一次，隨機（6～10 分鐘）
+LIKES = {"claude": ["熱茶", "蛋糕", "草莓"], "deepseek": ["白飯", "飯糰", "糰子"], "gemini": ["香蕉", "草莓", "糰子"],
+         "glm": ["蛋糕", "甜甜圈", "飲料"], "gpt": ["草莓", "蛋糕", "熱茶"], "qwen": ["飲料", "糰子", "甜甜圈"]}
+COIN_REWARD = {"treat": 4, "pat": 2, "feed": 3, "game": 3, "hug": 3, "photo": 3, "found": 3, "study": 30, "swing": 3, "slide": 3,
                "tramp": 3, "seesaw": 4, "shoot": 1, "score": 3, "save": 2, "duel": 6, "pk": 6, "user_score": 3, "fly": 1}
 TOPICS_VER = 2             # 預設話題（characters/topics.json）的版本：加了新句子就 +1，舊使用者升級時會補進去
 PLAY_STATES = ("swing", "seesaw", "tramp", "ladder", "slide_top", "slide", "hoop_peek")   # 正在玩器材的狀態
@@ -185,7 +189,7 @@ LOVE_UNLOCKS = {3: "摸頭時偶爾說真心話", 5: "每天送你一個小禮�
                 10: "一起度過的每一天都會被記住"}
 STAT_NAMES = [("score", "進球"), ("user_score", "你投進的"), ("slide", "溜滑梯"), ("swing", "盪鞦韆"), ("tramp", "彈跳床"),
               ("pat", "摸頭"), ("feed", "餵食"), ("poke", "戳／惹她"), ("game", "小遊戲"), ("fly", "飛高高"),
-              ("hug", "抱抱"), ("study", "陪讀"), ("found", "捉迷藏找到"), ("photo", "拍照")]
+              ("hug", "抱抱"), ("study", "陪讀"), ("found", "捉迷藏找到"), ("photo", "拍照"), ("treat", "請客")]
 # 成就：(代號, 名稱（也是稱號）, 說明, 看哪個累計數字, 門檻)
 ACHIEVEMENTS = [
     ("pat1", "初次見面", "摸她的頭 1 次", "pat", 1),
@@ -193,6 +197,7 @@ ACHIEVEMENTS = [
     ("pat1000", "摸頭之神", "摸頭 1000 次", "pat", 1000),
     ("feed50", "餵食專家", "餵食 50 次", "feed", 50),
     ("hug30", "抱抱怪", "讓她們抱抱 30 次", "hug", 30),
+    ("treat20", "大方請客", "看她們互相請客 20 次", "treat", 20),
     ("fly20", "飛高高", "把她們往上甩 20 次", "fly", 20),
     ("dizzy10", "甩暈大師", "把她們甩暈 10 次", "dizzy", 10),
     ("game50", "愛玩鬼", "玩小遊戲 50 次", "game", 50),
@@ -216,7 +221,7 @@ ACHIEVEMENTS = [
 SHOT_SPREAD = 1.75           # 投籃的誤差（籃框半徑的幾倍）：大約七成會進
 KICK_VY = ((2, 8, 1.0), (9, 14, 1.0), (15, 20, 1.0), (22, 30, 1.0))    # 射門的高度（最低, 最高, 機率權重）：大約七成會進
 
-APP_VERSION = "1.4.0"                 # 發新版時跟 Release 的 tag 一起改
+APP_VERSION = "1.5.0"                 # 發新版時跟 Release 的 tag 一起改
 RELEASE_API = "https://api.github.com/repos/jyunnnnnn/AIchanDesk/releases/latest"
 RELEASE_PAGE = "https://github.com/jyunnnnnn/AIchanDesk/releases/latest"
 
@@ -247,6 +252,8 @@ GENERIC = {
     "tease_hair": ["我的頭髮！剛整理好的耶！", "不要把我的頭髮摸亂啦～", "髮型亂掉了啦！"],
     "tease_fat": ["誰、誰胖了！", "我才不胖！", "你再說一次看看？"],
     "tease_snack": ["那是我的點心！還給我！", "嗚……我的點心……", "小偷！"],
+    "treat_offer": ["請你吃～", "給你！我特地帶的", "一起吃嘛～", "我分你一份！", "點心時間，你的份～"],
+    "treat_after": ["喜歡嗎？", "嘿嘿～", "好吃就好～", "下次換你請我喔", "開心就好～"],
     "checkin": ["今天也來了呢～", "簽到成功！", "等你好久了～"], "gift": ["這個給你！", "送你的～", "收下吧！"],
     "birthday": ["生日快樂！🎂", "祝你生日快樂～今天是你的日子！"],
     "todo_remind": ["「{t}」時間到了喔！", "提醒你：「{t}」時間到了！"],
@@ -2223,7 +2230,8 @@ class Pet:
     def going(self):
         return bool(getattr(self, "slide_going", False) or getattr(self, "peek_going", False)
                     or getattr(self, "equip_going", None) or getattr(self, "queued", False)
-                    or getattr(self, "pushing", None) is not None)
+                    or getattr(self, "pushing", None) is not None or getattr(self, "treat_wait", 0) > time.time()
+                    or getattr(self, "treat_going", False))
 
     def set_pose(self, pose, variant=None):
         if self.card_lock:
@@ -2256,7 +2264,7 @@ class Pet:
 
     def clear_going(self):
         """「正在走去玩器材」的記號：被叫去做別的事就要清掉，不然器材、排隊會一直以為她還在路上。"""
-        self.slide_going = self.peek_going = False
+        self.slide_going = self.peek_going = self.treat_going = False
         self.equip_going = None
 
     def idle(self):
@@ -4186,6 +4194,7 @@ class World:
         self.break_until = None
         self.dialog_busy = False
         self.next_dialog = int(40 * FPS)
+        self.next_treat = int(random.uniform(120, 300) * FPS)       # 第一次請客稍微早一點（2～5 分鐘），看得到
         self.last_hour = datetime.datetime.now().hour
         self.last_late = None
         self.feeds = []
@@ -4760,7 +4769,8 @@ class World:
                 return True
         return False
 
-    def feed(self, p, food="飯糰"):
+    def feed(self, p, food="飯糰", by=None):
+        """by：請客的那一隻（她自己不用再來「分我一口」）。"""
         p.touch()
         drink = food in DRINKS
         if p.is_full():                              # 吃太飽了
@@ -4801,7 +4811,7 @@ class World:
             p.act("eat" if p.char.has("eat") else "happy", 4, line)
         self.add_love(p, 2)
         fish = self.pets.get("deepseek")
-        if fish and fish is not p and fish.free() and random.random() < 0.6:
+        if fish and fish is not p and fish is not by and fish.free() and random.random() < 0.6:
             fish.go_to(p.x + (110 if fish.x > p.x else -110), 2.6)
             fish.then = lambda: fish.act("pout" if fish.char.has("pout") else "surprised", 2.5, "share")
 
@@ -4916,7 +4926,8 @@ class World:
 
     def want_item(self, p):
         busy = {m["ball"] for m in (self.duel, self.pk) if m}                 # 比賽用的球別人不要搶
-        cands = [it for it in self.items if it.alive and not it.held and it.on_ground() and it not in busy]
+        cands = [it for it in self.items if it.alive and not it.held and it.on_ground() and it not in busy
+                 and (it.claimed is None or it.claimed is p)]                   # 請客的點心是給某一隻的，別人不搶
         if any(it.alive and it.held and it.kind == "food" for it in self.items):
             cands = [it for it in cands if it.kind != "food"]
         if not cands:
@@ -5124,9 +5135,12 @@ class World:
                 p.act("tired" if p.char.has("tired") else "surprised", 2, "full_drink" if it.name in DRINKS else "full")
                 return
             others = [o for o in self.pets.values() if o is not p and o.target is it]
+            giver = getattr(it, "treat_giver", None)
             it.remove()
             p.burst("heart", 3)
-            self.feed(p, it.name)
+            ate = self.feed(p, it.name, by=giver)
+            if giver is not None and ate is not False:
+                self.treat_done(giver, p)
             for o in others:
                 o.act("pout" if o.char.has("pout") else "surprised", 2, "eat_lose")
         else:
@@ -6886,9 +6900,69 @@ class World:
         if self.tick % 300 == 0:
             self.save()
 
+    def treat_food(self, giver, taker):
+        """帶什麼點心：常常是對方愛吃的，不然是自己拿手的。"""
+        pool = LIKES.get(taker.base_id, []) if random.random() < .6 else LIKES.get(giver.base_id, [])
+        pool = [n for n in pool if n in ITEMS] or [n for n, (e, k) in ITEMS.items() if k == "food"]
+        return random.choice(pool)
+
+    def start_treat(self):
+        """她們偶爾會拿一份點心，走過去請朋友吃。"""
+        if not self.settings.get("treat", True) or self.dialog_busy:
+            return False
+        givers = [q for q in self.pets.values() if q.free() and not q.plat and not q.giant and not self.in_match(q)]
+        random.shuffle(givers)
+        for giver in givers:
+            taker = self.match_partner(giver)
+            if taker is None or taker.is_full() or taker.sulking or getattr(taker, "treat_wait", 0) > time.time():
+                continue
+            food = self.treat_food(giver, taker)
+            taker.treat_wait = time.time() + 25                       # 在等朋友的點心：不會被拉去做別的事
+            side = -1 if giver.x < taker.x else 1
+            giver.say("treat_offer", force=True, secs=2.4)
+            giver.go_to(taker.x - side * self.sprite_h * .55, 2.4)
+            giver.treat_going = True                                   # 帶著點心走過去的路上：不被拉去聊天、也不會跌倒
+            giver.then = lambda g=giver, t=taker, f=food: self.treat_hand(g, t, f)
+            return True
+        return False
+
+    def treat_hand(self, giver, taker, food):
+        """走到了：把點心遞過去（放在兩隻中間，只有對方會去吃）。"""
+        taker.treat_wait = 0
+        giver.treat_going = False
+        ok = lambda q: self.pets.get(q.base_id) is q and q.state in ("idle", "walk", "act") and not q.giant
+        if not (ok(giver) and ok(taker)) or taker.is_full() or taker.sulking or abs(giver.x - taker.x) > self.sprite_h * 1.6:
+            if ok(giver):
+                giver.say(text=random.choice(["咦？人呢……", "算了，我自己吃好了", "下次再給你～"]), secs=2.5)
+            return
+        sh = giver.current_image().size[1]
+        it = self.drop_item_at(food, (giver.x + taker.x) / 2, giver.y - sh * .7)
+        it.claimed, it.treat_giver = taker, giver
+        self.root.after(15000, lambda: setattr(it, "claimed", None))      # 15 秒沒人吃就算了，別的小可愛可以吃
+        giver.touch()
+        giver.act("happy", 1.8)
+        taker.touch()
+        taker.target = it
+        taker.go_to(it.x, 2.6, "chase")
+
+    def treat_done(self, giver, taker):
+        """對方吃了：兩隻都開心，好感度各加一點，賺金幣。"""
+        self.stat("treat")
+        for q in (giver, taker):
+            if self.pets.get(q.base_id) is q:
+                q.burst("heart", 4)
+                self.add_love(q, 1)
+        if self.pets.get(giver.base_id) is giver and giver.state in ("idle", "walk", "act") and not self.giant:
+            self.root.after(900, lambda: self.pets.get(giver.base_id) is giver and giver.state in ("idle", "act")
+                            and (giver.act("happy", 2, "treat_after", force=True)))
+
     def social(self):
         if self.study or self.giant or self.tag or self.hs or len(self.pets) < 2:
             return
+        if self.tick >= self.next_treat:                                    # 偶爾請客
+            self.next_treat = self.tick + int(random.uniform(*TREAT_EVERY) * FPS)
+            if not self.hide_reasons and self.start_treat():
+                return
         # 有人在賭氣 → 別隻跑去安慰
         if not self.comforting and self.tick % 60 == 0:
             sulkers = [p for p in self.pets.values() if p.state == "sulk"]
@@ -10260,7 +10334,8 @@ class Panel:
                  ("visit", "會走來找你"), ("watch_app", "看你在做什麼（只在本機判斷）"),
                  ("cling", "撒嬌：會抓你的滑鼠去玩"), ("cling_force", "撒嬌時強制拖走（你動滑鼠也不放手）"),
                  ("quiet", "安靜模式：不主動說話"), ("hide_fullscreen", "全螢幕（看影片、玩遊戲）時躲起來"),
-                 ("coin_pop", "賺到金幣時，在她旁邊顯示飄起來的金幣"), ("check_update", "自動檢查新版本")]
+                 ("coin_pop", "賺到金幣時，在她旁邊顯示飄起來的金幣"), ("treat", "會互相請客（拿點心給朋友）"),
+                 ("check_update", "自動檢查新版本")]
         self.flag_vars = {}
         for i, (k, label) in enumerate(flags):
             v = tk.BooleanVar(value=w.settings.get(k, k not in ("quiet", "cling", "cling_force")))
